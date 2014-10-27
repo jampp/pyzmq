@@ -305,6 +305,28 @@ class Socket(SocketBase, AttributeSetter):
     
         return parts
 
+    if not hasattr(SocketBase, 'proxy_to'):
+        # Fallback implementation
+        def proxy_to(self, other):
+            """s.proxy_to(s2)
+    
+            Receive all available messages from s and send them
+            to s2 in a tight loop, return when no more messages
+            are available to be sent or an error arises. Will inevitably
+            raise an error in either case, where the norm is an EAGAIN.
+    
+            Raises
+            ------
+            ZMQError
+                always with the first error, which under normal conditions
+                will be an EAGAIN.
+            """
+            flags = zmq.NOBLOCK
+            copy = False
+            while 1:
+                msg = self.recv_multipart(flags, copy)
+                self.send_multipart(msg, flags, copy)
+
     def send_string(self, u, flags=0, copy=True, encoding='utf-8'):
         """send a Python unicode string as a message with an encoding
     

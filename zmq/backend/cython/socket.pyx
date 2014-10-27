@@ -133,6 +133,7 @@ cdef inline Frame _recv_frame(void *handle, int flags=0, track=False):
 cdef inline object _recv_copy(void *handle, int flags=0):
     """Receive a message and return a copy"""
     cdef zmq_msg_t zmq_msg
+    cdef int rc
     with nogil:
         zmq_msg_init (&zmq_msg)
         rc = zmq_msg_recv(&zmq_msg, handle, flags)
@@ -156,6 +157,39 @@ cdef inline object _send_frame(void *handle, Frame msg, int flags=0):
     _check_rc(rc)
     return msg.tracker
 
+cdef inline void _proxy_step(void *handle_from, void *handle_to):
+    """Receive all available messages from handle_from and send them
+    to handle_to in a tight loop, return when no more messages
+    are available to be sent or an error arises. Will inevitably
+    raise an error in either case, where the norm is an EAGAIN.
+    """
+    cdef zmq_msg_t zmq_msg
+    cdef int rc
+    cdef int flags
+    cdef size_t sz
+    cdef int64_t sendmore
+    with nogil:
+        while 1:
+            flags = ZMQ_NOBLOCK
+            zmq_msg_init (&zmq_msg)
+            rc = zmq_msg_recv(&zmq_msg, handle_from, flags)
+            if rc < 0:
+                zmq_msg_close(&zmq_msg)
+                break
+            else:
+                sz = sizeof(int64_t)
+                rc = zmq_getsockopt(handle_from, ZMQ_RCVMORE, <void *>&sendmore, &sz)
+                if rc < 0:
+                    zmq_msg_close(&zmq_msg)
+                    break
+                else:
+                    if sendmore:
+                        flags |= ZMQ_SNDMORE
+                    rc = zmq_msg_send(&zmq_msg, handle_to, flags)
+                    zmq_msg_close(&zmq_msg)
+                    if rc < 0:
+                        break
+    _check_rc(rc)
 
 cdef inline object _send_copy(void *handle, object msg, int flags=0):
     """Send a message on this socket by copying its content."""
@@ -667,6 +701,21 @@ cdef class Socket:
             frame = _recv_frame(self.handle, flags, track)
             frame.more = self.getsockopt(zmq.RCVMORE)
             return frame
-    
+
+    cpdef object proxy_to(self, Socket other):
+        """s.proxy_to(s2)
+
+        Receive all available messages from s and send them
+        to s2 in a tight loop, return when no more messages
+        are available to be sent or an error arises. Will inevitably
+        raise an error in either case, where the norm is an EAGAIN.
+
+        Raises
+        ------
+        ZMQError
+            always with the first error, which under normal conditions
+            will be an EAGAIN.
+        """
+        _proxy_step(self.handle, other.handle)
 
 __all__ = ['Socket', 'IPC_PATH_MAX_LEN']
