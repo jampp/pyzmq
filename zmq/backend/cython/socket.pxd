@@ -44,5 +44,5 @@ cdef class Socket:
     # cpdef methods for direct-cython access:
     cpdef object send(self, object data, int flags=*, copy=*, track=*)
     cpdef object recv(self, int flags=*, copy=*, track=*)
-    cpdef object proxy_to(self, Socket other)
+    cpdef object proxy_to(self, Socket other, int max_loops=*)
 

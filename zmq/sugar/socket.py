@@ -307,13 +307,21 @@ class Socket(SocketBase, AttributeSetter):
 
     if not hasattr(SocketBase, 'proxy_to'):
         # Fallback implementation
-        def proxy_to(self, other):
-            """s.proxy_to(s2)
+        def proxy_to(self, other, max_loops = 0):
+            """s.proxy_to(other)
     
             Receive all available messages from s and send them
-            to s2 in a tight loop, return when no more messages
+            to "other" in a tight loop, return when no more messages
             are available to be sent or an error arises. Will inevitably
-            raise an error in either case, where the norm is an EAGAIN.
+            raise an error in either case, where the norm is an EAGAIN,
+            or return normally if max_loops is reached.
+
+            Parameters
+            ----------
+            other : socket to relay messages to
+
+            max_loops : maximum amount of messages to relay, defaults
+                to 0 which means infinity.
     
             Raises
             ------
@@ -326,6 +334,10 @@ class Socket(SocketBase, AttributeSetter):
             while 1:
                 msg = self.recv_multipart(flags, copy)
                 self.send_multipart(msg, flags, copy)
+                if max_loops > 0:
+                    max_loops -= 1
+                    if max_loops <= 0:
+                        break
 
     def send_string(self, u, flags=0, copy=True, encoding='utf-8'):
         """send a Python unicode string as a message with an encoding
