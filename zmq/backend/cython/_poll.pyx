@@ -44,6 +44,47 @@ else:
     int_t = (int,long)
 
 
+cdef inline _zmq_poll(list sockets, zmq_pollitem_t *pollitems, int nsockets, long timeout):
+    """zmq_poll(nsockets, pollitems, timeout)
+
+    Poll a set of 0MQ sockets, native file descs. or sockets.
+
+    Parameters
+    ----------
+    nsockets : number of entries in pollitems
+
+    pollitems : list of tuples zmq_pollitem_t structs 
+        Each element of this list contains a socket or file descriptor
+        and a flags. The flags can be zmq.POLLIN (for detecting
+        for incoming messages), zmq.POLLOUT (for detecting that send is OK)
+        or zmq.POLLIN|zmq.POLLOUT for detecting both.
+    
+    timeout : int
+        The number of milliseconds to poll for. Negative means no timeout.
+    """
+    with nogil:
+        rc = zmq_poll_c(pollitems, nsockets, timeout)
+    
+    if rc < 0:
+        _check_rc(rc)
+    
+    cdef list results = []
+    cdef int i
+    cdef object s
+    cdef short revents
+    for i in range(nsockets):
+        revents = pollitems[i].revents
+        # for compatibility with select.poll:
+        # - only return sockets with non-zero status
+        # - return the fd for plain sockets
+        if revents > 0:
+            if pollitems[i].socket != NULL:
+                s = sockets[i][0]
+            else:
+                s = pollitems[i].fd
+            results.append((s, revents))
+    return results
+
 def zmq_poll(sockets, long timeout=-1):
     """zmq_poll(sockets, timeout=-1)
 
@@ -82,7 +123,10 @@ def zmq_poll(sockets, long timeout=-1):
         # timeout is us in 2.x, ms in 3.x
         # expected input is ms (matches 3.x)
         timeout = 1000*timeout
-    
+
+    cdef object s
+    cdef int fileno
+    cdef short events
     for i in range(nsockets):
         s, events = sockets[i]
         if isinstance(s, Socket):
@@ -114,30 +158,12 @@ def zmq_poll(sockets, long timeout=-1):
                 "a fileno() method: %r" % s
             )
     
-
-    with nogil:
-        rc = zmq_poll_c(pollitems, nsockets, timeout)
-    
-    if rc < 0:
+    try:
+        results = _zmq_poll(sockets, pollitems, nsockets, timeout)
+    finally:
         if free_pollitems:
             free(pollitems)
-        _check_rc(rc)
-    
-    results = []
-    for i in range(nsockets):
-        revents = pollitems[i].revents
-        # for compatibility with select.poll:
-        # - only return sockets with non-zero status
-        # - return the fd for plain sockets
-        if revents > 0:
-            if pollitems[i].socket != NULL:
-                s = sockets[i][0]
-            else:
-                s = pollitems[i].fd
-            results.append((s, revents))
 
-    if free_pollitems:
-        free(pollitems)
     return results
 
 #-----------------------------------------------------------------------------
