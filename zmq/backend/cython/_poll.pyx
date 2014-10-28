@@ -98,7 +98,8 @@ def zmq_poll(sockets, long timeout=-1):
             try:
                 fileno = int(s.fileno())
             except:
-                free(pollitems)
+                if free_pollitems:
+                    free(pollitems)
                 raise ValueError('fileno() must return a valid integer fd')
             else:
                 pollitems[i].socket = NULL
@@ -106,7 +107,8 @@ def zmq_poll(sockets, long timeout=-1):
                 pollitems[i].events = events
                 pollitems[i].revents = 0
         else:
-            free(pollitems)
+            if free_pollitems:
+                free(pollitems)
             raise TypeError(
                 "Socket must be a 0MQ socket, an integer fd or have "
                 "a fileno() method: %r" % s
@@ -117,7 +119,8 @@ def zmq_poll(sockets, long timeout=-1):
         rc = zmq_poll_c(pollitems, nsockets, timeout)
     
     if rc < 0:
-        free(pollitems)
+        if free_pollitems:
+            free(pollitems)
         _check_rc(rc)
     
     results = []
