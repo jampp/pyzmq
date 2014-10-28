@@ -23,7 +23,7 @@
 # Imports
 #-----------------------------------------------------------------------------
 
-from libc.stdlib cimport free, malloc
+from libc.stdlib cimport free, malloc, realloc
 
 from libzmq cimport zmq_pollitem_t, ZMQ_VERSION_MAJOR
 from libzmq cimport zmq_poll as zmq_poll_c
@@ -44,7 +44,7 @@ else:
     int_t = (int,long)
 
 
-cdef inline _zmq_poll(list sockets, zmq_pollitem_t *pollitems, int nsockets, long timeout):
+cdef inline object _zmq_poll(sockets, zmq_pollitem_t *pollitems, int nsockets, long timeout):
     """zmq_poll(nsockets, pollitems, timeout)
 
     Poll a set of 0MQ sockets, native file descs. or sockets.
@@ -85,6 +85,42 @@ cdef inline _zmq_poll(list sockets, zmq_pollitem_t *pollitems, int nsockets, lon
             results.append((s, revents))
     return results
 
+cdef inline int _fill_pollitems(sockets, zmq_pollitem_t *pollitems, int nsockets) except -1:
+    if nsockets == 0:
+        return 0
+
+    cdef object s
+    cdef int fileno, i
+    cdef short events
+    for i in range(nsockets):
+        s, events = sockets[i]
+        if isinstance(s, Socket):
+            pollitems[i].socket = (<Socket>s).handle
+            pollitems[i].events = events
+            pollitems[i].revents = 0
+        elif isinstance(s, int_t):
+            pollitems[i].socket = NULL
+            pollitems[i].fd = s
+            pollitems[i].events = events
+            pollitems[i].revents = 0
+        elif hasattr(s, 'fileno'):
+            try:
+                fileno = int(s.fileno())
+            except:
+                raise ValueError('fileno() must return a valid integer fd')
+            else:
+                pollitems[i].socket = NULL
+                pollitems[i].fd = fileno
+                pollitems[i].events = events
+                pollitems[i].revents = 0
+        else:
+            raise TypeError(
+                "Socket must be a 0MQ socket, an integer fd or have "
+                "a fileno() method: %r" % s
+            )
+
+    return 0
+
 def zmq_poll(sockets, long timeout=-1):
     """zmq_poll(sockets, timeout=-1)
 
@@ -105,7 +141,6 @@ def zmq_poll(sockets, long timeout=-1):
     cdef zmq_pollitem_t *pollitems = NULL
     cdef zmq_pollitem_t _sml_pollitems[16]
     cdef int nsockets = <int>len(sockets)
-    cdef Socket current_socket
     
     if nsockets == 0:
         return []
@@ -124,41 +159,8 @@ def zmq_poll(sockets, long timeout=-1):
         # expected input is ms (matches 3.x)
         timeout = 1000*timeout
 
-    cdef object s
-    cdef int fileno
-    cdef short events
-    for i in range(nsockets):
-        s, events = sockets[i]
-        if isinstance(s, Socket):
-            pollitems[i].socket = (<Socket>s).handle
-            pollitems[i].events = events
-            pollitems[i].revents = 0
-        elif isinstance(s, int_t):
-            pollitems[i].socket = NULL
-            pollitems[i].fd = s
-            pollitems[i].events = events
-            pollitems[i].revents = 0
-        elif hasattr(s, 'fileno'):
-            try:
-                fileno = int(s.fileno())
-            except:
-                if free_pollitems:
-                    free(pollitems)
-                raise ValueError('fileno() must return a valid integer fd')
-            else:
-                pollitems[i].socket = NULL
-                pollitems[i].fd = fileno
-                pollitems[i].events = events
-                pollitems[i].revents = 0
-        else:
-            if free_pollitems:
-                free(pollitems)
-            raise TypeError(
-                "Socket must be a 0MQ socket, an integer fd or have "
-                "a fileno() method: %r" % s
-            )
-    
     try:
+        _fill_pollitems(sockets, pollitems, nsockets)
         results = _zmq_poll(sockets, pollitems, nsockets, timeout)
     finally:
         if free_pollitems:
@@ -166,8 +168,39 @@ def zmq_poll(sockets, long timeout=-1):
 
     return results
 
+cdef class PollerBase:
+    """A stateful poll interface that mirrors Python's built-in poll."""
+
+    cdef zmq_pollitem_t *pollitems
+    cdef size_t nitems
+    cdef int dirty
+
+    def __init__(self):
+        self.pollitems = NULL
+        self.nitems = 0
+        self.dirty = 1
+
+    def __dealloc__(self):
+        if self.pollitems != NULL:
+            free(self.pollitems)
+            self.pollitems = NULL
+    
+    def on_modified(self):
+        self.dirty = 1
+
+    def _poll(self, sockets, long timeout=-1):
+        cdef size_t nsockets = len(sockets)
+        if self.dirty or nsockets != self.nitems or self.pollitems == NULL:
+            self.pollitems = <zmq_pollitem_t*>realloc(<void*>self.pollitems, nsockets*sizeof(zmq_pollitem_t))
+            if self.pollitems == NULL:
+                raise MemoryError("Could not allocate poll items")
+            self.nitems = nsockets
+            _fill_pollitems(sockets, self.pollitems, self.nitems)
+            self.dirty = 0
+        return _zmq_poll(sockets, self.pollitems, self.nitems, timeout)
+
 #-----------------------------------------------------------------------------
 # Symbols to export
 #-----------------------------------------------------------------------------
 
-__all__ = [ 'zmq_poll' ]
+__all__ = [ 'zmq_poll', 'PollerBase' ]

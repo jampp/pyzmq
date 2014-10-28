@@ -12,8 +12,15 @@ from .constants import POLLIN, POLLOUT, POLLERR
 # Polling related methods
 #-----------------------------------------------------------------------------
 
+try:
+    from zmq.backend import PollerBase
+except:
+    class PollerBase(object):
+        def on_modified(self):
+            pass
+        _poll = staticmethod(zmq_poll)
 
-class Poller(object):
+class Poller(PollerBase):
     """A stateful poll interface that mirrors Python's built-in poll."""
     sockets = None
     _map = {}
@@ -49,9 +56,11 @@ class Poller(object):
                 idx = len(self.sockets)
                 self.sockets.append((socket, flags))
                 self._map[socket] = idx
+            self.on_modified()
         elif socket in self._map:
             # uregister sockets registered with no events
             self.unregister(socket)
+            self.on_modified()
         else:
             # ignore new sockets with no events
             pass
@@ -59,6 +68,7 @@ class Poller(object):
     def modify(self, socket, flags=POLLIN|POLLOUT):
         """Modify the flags for an already registered 0MQ socket or native fd."""
         self.register(socket, flags)
+        self.on_modified()
 
     def unregister(self, socket):
         """Remove a 0MQ socket or native fd for I/O monitoring.
@@ -73,6 +83,7 @@ class Poller(object):
         # shift indices after deletion
         for socket, flags in self.sockets[idx:]:
             self._map[socket] -= 1
+        self.on_modified()
 
     def poll(self, timeout=None):
         """Poll the registered 0MQ or native fds for I/O.
@@ -98,7 +109,7 @@ class Poller(object):
             timeout = -1
         elif isinstance(timeout, float):
             timeout = int(timeout)
-        return zmq_poll(self.sockets, timeout=timeout)
+        return self._poll(self.sockets, timeout)
 
 
 def select(rlist, wlist, xlist, timeout=None):

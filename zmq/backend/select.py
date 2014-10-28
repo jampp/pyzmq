@@ -12,6 +12,7 @@ public_api = [
     'device',
     'proxy',
     'zmq_poll',
+    'PollerBase',
     'strerror',
     'zmq_errno',
     'has',
