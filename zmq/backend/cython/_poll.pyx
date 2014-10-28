@@ -60,17 +60,23 @@ def zmq_poll(sockets, long timeout=-1):
     timeout : int
         The number of milliseconds to poll for. Negative means no timeout.
     """
-    cdef int rc, i
+    cdef int rc, i, free_pollitems
     cdef zmq_pollitem_t *pollitems = NULL
+    cdef zmq_pollitem_t _sml_pollitems[16]
     cdef int nsockets = <int>len(sockets)
     cdef Socket current_socket
     
     if nsockets == 0:
         return []
-    
-    pollitems = <zmq_pollitem_t *>malloc(nsockets*sizeof(zmq_pollitem_t))
-    if pollitems == NULL:
-        raise MemoryError("Could not allocate poll items")
+
+    if nsockets <= 16:
+        free_pollitems = 0
+        pollitems = _sml_pollitems
+    else:
+        free_pollitems = 1
+        pollitems = <zmq_pollitem_t *>malloc(nsockets*sizeof(zmq_pollitem_t))
+        if pollitems == NULL:
+            raise MemoryError("Could not allocate poll items")
         
     if ZMQ_VERSION_MAJOR < 3:
         # timeout is us in 2.x, ms in 3.x
@@ -127,7 +133,8 @@ def zmq_poll(sockets, long timeout=-1):
                 s = pollitems[i].fd
             results.append((s, revents))
 
-    free(pollitems)
+    if free_pollitems:
+        free(pollitems)
     return results
 
 #-----------------------------------------------------------------------------
