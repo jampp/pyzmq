@@ -446,7 +446,7 @@ class Socket(SocketBase, AttributeSetter):
         msg = self.recv(flags)
         return jsonapi.loads(msg, **kwargs)
     
-    _poller_class = Poller
+    _poller_class = None
 
     def poll(self, timeout=None, flags=POLLIN):
         """poll the socket for events
@@ -473,9 +473,13 @@ class Socket(SocketBase, AttributeSetter):
         if self.closed:
             raise ZMQError(ENOTSUP)
 
-        p = self._poller_class()
-        p.register(self, flags)
-        evts = dict(p.poll(timeout))
+        poller_class = self._poller_class
+        if poller_class is not None:
+            p = self._poller_class()
+            p.register(self, flags)
+            evts = dict(p.poll(timeout))
+        else:
+            evts = dict(zmq.zmq_poll([(self,flags)], timeout))
         # return 0 if no events, otherwise return event bitfield
         return evts.get(self, 0)
 
