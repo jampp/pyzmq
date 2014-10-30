@@ -479,6 +479,10 @@ class Socket(SocketBase, AttributeSetter):
             p.register(self, flags)
             evts = dict(p.poll(timeout))
         else:
+            if timeout is None or timeout < 0:
+                timeout = -1
+            elif isinstance(timeout, float):
+                timeout = int(timeout)
             evts = dict(zmq.zmq_poll([(self,flags)], timeout))
         # return 0 if no events, otherwise return event bitfield
         return evts.get(self, 0)

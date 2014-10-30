@@ -4,6 +4,7 @@
 
 import time
 import warnings
+import threading
 
 import zmq
 from zmq.tests import (
@@ -345,6 +346,20 @@ class TestSocket(BaseZMQTestCase):
         evt = b.poll(50)
         self.assertEqual(evt, 0)
         self.assertEqual(msg2, msg)
+    
+    def test_poll_no_timeout(self):
+        a,b = self.create_bound_pair()
+        tic = time.time()
+        msg = b'hi'
+        a.send(msg)
+        evt = [None]
+        def do_poll():
+            evt[0] = b.poll()
+        t = threading.Thread(target=do_poll)
+        t.setDaemon(True)
+        t.start()
+        t.join(1) # Long timeout, avoid threading issues
+        self.assertEqual(evt[0], zmq.POLLIN)
     
     def test_ipc_path_max_length(self):
         """IPC_PATH_MAX_LEN is a sensible value"""
