@@ -27,7 +27,7 @@
 cdef extern from "pyversion_compat.h":
     pass
 
-from libc.errno cimport ENAMETOOLONG
+from libc.errno cimport ENAMETOOLONG, EAGAIN
 from libc.string cimport memcpy
 
 from cpython cimport PyBytes_FromStringAndSize
@@ -74,7 +74,7 @@ except:
 import zmq
 from zmq.backend.cython import constants
 from zmq.backend.cython.constants import *
-from zmq.backend.cython.checkrc cimport _check_rc
+from zmq.backend.cython.checkrc cimport _check_rc, _raise_errno
 from zmq.error import ZMQError, ZMQBindError, _check_version
 from zmq.utils.strtypes import bytes,unicode,basestring
 
@@ -160,11 +160,12 @@ cdef inline object _send_frame(void *handle, Frame msg, int flags=0):
 cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) except 1:
     """Receive all available messages from handle_from and send them
     to handle_to in a tight loop, return when no more messages
-    are available to be sent or an error arises. Will inevitably
-    raise an error in either case, where the norm is an EAGAIN.
+    are available to be sent or an error arises. Will not raise
+    zmq.Again when there's no more messages to retrieve, but it might
+    if they cannot be sent.
     """
     cdef zmq_msg_t zmq_msg
-    cdef int rc
+    cdef int rc, errno
     cdef int flags
     cdef size_t sz
     cdef int64_t sendmore
@@ -179,22 +180,29 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
                 flags = ZMQ_NOBLOCK
             rc = zmq_msg_recv(&zmq_msg, handle_from, flags)
             if rc < 0:
+                errno = zmq_errno()
+                if errno == EAGAIN:
+                    # swallow EAGAIN
+                    rc = 0
                 break
             else:
                 rc = zmq_getsockopt(handle_from, ZMQ_RCVMORE, <void *>&sendmore, &sz)
                 if rc < 0:
+                    errno = zmq_errno()
                     break
                 else:
                     if sendmore:
                         flags = ZMQ_SNDMORE
                     rc = zmq_msg_send(&zmq_msg, handle_to, flags)
                     if rc < 0:
+                        errno = zmq_errno()
                         break
                     elif not sendmore and max_loops > 0:
                         max_loops -= 1
                         if max_loops <= 0:
                             break
-    _check_rc(rc)
+    if rc < 0:
+        _raise_errno(rc)
     zmq_msg_close(&zmq_msg)
     return 0
 
@@ -714,9 +722,9 @@ cdef class Socket:
 
         Receive all available messages from s and send them
         to s2 in a tight loop, return when no more messages
-        are available to be sent or an error arises. Will inevitably
-        raise an error in either case, where the norm is an EAGAIN,
-        or return normally if max_loops is reached.
+        are available to be sent or an error arises. Will not 
+        raise zmq.Again when there's no more messages to 
+        retrieve, but it might if they cannot be sent.
 
         Parameters
         ----------
@@ -728,8 +736,9 @@ cdef class Socket:
         Raises
         ------
         ZMQError
-            always with the first error, which under normal conditions
-            will be an EAGAIN.
+            always with the first error, except it will not raise
+            zmq.Again when there's no more messages to retrieve, 
+            but it might if they cannot be sent.
         """
         _proxy_step(self.handle, other.handle, max_loops)
 

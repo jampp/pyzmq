@@ -312,9 +312,9 @@ class Socket(SocketBase, AttributeSetter):
     
             Receive all available messages from s and send them
             to "other" in a tight loop, return when no more messages
-            are available to be sent or an error arises. Will inevitably
-            raise an error in either case, where the norm is an EAGAIN,
-            or return normally if max_loops is reached.
+            are available to be sent or an error arises. Will not 
+            raise zmq.Again when there's no more messages to 
+            retrieve, but it might if they cannot be sent.
 
             Parameters
             ----------
@@ -326,13 +326,17 @@ class Socket(SocketBase, AttributeSetter):
             Raises
             ------
             ZMQError
-                always with the first error, which under normal conditions
-                will be an EAGAIN.
+                always with the first error, except it will not 
+                raise zmq.Again when there's no more messages to 
+                retrieve, but it might if they cannot be sent.
             """
             flags = zmq.NOBLOCK
             copy = False
             while 1:
-                msg = self.recv_multipart(flags, copy)
+                try:
+                    msg = self.recv_multipart(flags, copy)
+                except zmq.Again:
+                    break
                 self.send_multipart(msg, flags, copy)
                 if max_loops > 0:
                     max_loops -= 1
