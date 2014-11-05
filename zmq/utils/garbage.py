@@ -110,6 +110,9 @@ class GarbageCollector(object):
         """stop the garbage-collection thread"""
         if not self.is_alive():
             return
+        self._stop()
+    
+    def _stop(self):
         push = self.context.socket(zmq.PUSH)
         push.connect(self.url)
         push.send(b'DIE')
@@ -117,6 +120,7 @@ class GarbageCollector(object):
         self.thread.join()
         self.context.term()
         self.refs.clear()
+        self.context = None
     
     def start(self):
         """Start a new garbage collection thread.
@@ -124,6 +128,10 @@ class GarbageCollector(object):
         Creates a new zmq Context used for garbage collection.
         Under most circumstances, this will only be called once per process.
         """
+        if self.thread is not None and self.pid != getpid():
+            # It's re-starting, must free earlier thread's context
+            # since a fork probably broke it
+            self._stop()
         self.pid = getpid()
         self.refs = {}
         self.thread = GarbageCollectorThread(self)
