@@ -169,6 +169,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
     cdef int flags
     cdef size_t sz
     cdef int64_t sendmore
+
     with nogil:
         sendmore = 0
         sz = sizeof(int64_t)
@@ -192,7 +193,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
                     break
                 else:
                     if sendmore:
-                        flags = ZMQ_SNDMORE
+                        flags |= ZMQ_SNDMORE
                     rc = zmq_msg_send(&zmq_msg, handle_to, flags)
                     if rc < 0:
                         errno = zmq_errno()
@@ -201,9 +202,10 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
                         max_loops -= 1
                         if max_loops <= 0:
                             break
+        zmq_msg_close(&zmq_msg)
+
     if rc < 0:
-        _raise_errno(rc)
-    zmq_msg_close(&zmq_msg)
+        _raise_errno(errno)
     return 0
 
 cdef inline object _send_copy(void *handle, object msg, int flags=0):
