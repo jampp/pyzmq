@@ -116,7 +116,10 @@ cdef class Context:
         return <size_t> self.handle
     
     # backward-compat, though nobody is using it
-    _handle = underlying
+    @property
+    def _handle(self):
+        """The address of the underlying libzmq context"""
+        return <size_t> self.handle
     
     cdef inline int _term(self):
         cdef int rc=0
