@@ -11,7 +11,7 @@ VERSION_MAJOR = 14
 VERSION_MINOR = 4
 VERSION_PATCH = 1
 VERSION_EXTRA = ""
-__version__ = '%i.%i.%i' % (VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
+__version__ = '%i.%i.%ij' % (VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH)
 
 if VERSION_EXTRA:
     __version__ = "%s-%s" % (__version__, VERSION_EXTRA)
