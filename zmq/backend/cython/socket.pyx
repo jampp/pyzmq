@@ -89,7 +89,7 @@ IPC_PATH_MAX_LEN = get_ipc_path_max_len()
 
 cdef inline _check_closed(Socket s):
     """raise ENOTSUP if socket is closed
-    
+
     Does not do a deep check
     """
     if s._closed:
@@ -98,9 +98,9 @@ cdef inline _check_closed(Socket s):
 cdef inline _check_closed_deep(Socket s):
     """thorough check of whether the socket has been closed,
     even if by another entity (e.g. ctx.destroy).
-    
+
     Only used by the `closed` property.
-    
+
     returns True if closed, False otherwise
     """
     cdef int rc
@@ -126,7 +126,7 @@ cdef inline Frame _recv_frame(void *handle, int flags=0, track=False):
 
     with nogil:
         rc = zmq_msg_recv(&cmsg.zmq_msg, handle, flags)
-    
+
     _check_rc(rc)
     return msg
 
@@ -208,29 +208,108 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
         _raise_errno(errno)
     return 0
 
+cdef struct zmq_part_data_t:
+    zmq_msg_t frame
+    char *msg_c
+    Py_ssize_t msg_c_len
+
+cdef inline void zmq_part_data_init(zmq_part_data_t *part):
+    part[0].msg_c = NULL
+    part[0].msg_c_len = 0
+
+cdef inline int zmq_part_data_asbuffer_r(zmq_part_data_t *part, object msg) except -1:
+    asbuffer_r(msg, <void **>&part[0].msg_c, &part[0].msg_c_len)
+    return 0
+
 cdef inline object _send_copy(void *handle, object msg, int flags=0):
     """Send a message on this socket by copying its content."""
     cdef int rc, rc2
-    cdef zmq_msg_t data
-    cdef char *msg_c
-    cdef Py_ssize_t msg_c_len=0
+    cdef zmq_part_data_t data
 
     # copy to c array:
-    asbuffer_r(msg, <void **>&msg_c, &msg_c_len)
+    zmq_part_data_init(&data)
+    zmq_part_data_asbuffer_r(&data, msg)
 
     # Copy the msg before sending. This avoids any complications with
     # the GIL, etc.
     # If zmq_msg_init_* fails we must not call zmq_msg_close (Bus Error)
-    rc = zmq_msg_init_size(&data, msg_c_len)
+    rc = zmq_msg_init_size(&data.frame, data.msg_c_len)
 
     _check_rc(rc)
 
     with nogil:
-        memcpy(zmq_msg_data(&data), msg_c, zmq_msg_size(&data))
-        rc = zmq_msg_send(&data, handle, flags)
-        rc2 = zmq_msg_close(&data)
+        memcpy(zmq_msg_data(&data.frame), data.msg_c, zmq_msg_size(&data.frame))
+        rc = zmq_msg_send(&data.frame, handle, flags)
+        rc2 = zmq_msg_close(&data.frame)
     _check_rc(rc)
     _check_rc(rc2)
+
+cdef inline object _send_multipart_copy(void *handle, object msg_parts, int flags=0):
+    """Send a multipart message on this socket by copying its content."""
+    cdef int rc, rc2, rc3
+    cdef Py_ssize_t num_parts, base_part, batch_parts, partno
+    cdef int part_flags
+    cdef bint last_batch
+    cdef zmq_part_data_t data[32]
+    cdef object obj
+
+    num_parts = len(msg_parts)
+    base_part = 0
+
+    while base_part < num_parts:
+        # copy to c array:
+        batch_parts = num_parts - base_part
+        if batch_parts > 32:
+            batch_parts = 32
+            last_batch = False
+        else:
+            last_batch = True
+
+        # Copy the msg before sending. This avoids any complications with
+        # the GIL, etc.
+        # If zmq_msg_init_* fails we must not call zmq_msg_close (Bus Error)
+
+        for partno in range(batch_parts):
+            obj = msg_parts[base_part + partno]
+            if isinstance(obj, Frame):
+                obj = obj.buffer
+            zmq_part_data_init(&data[partno])
+            zmq_part_data_asbuffer_r(&data[partno], obj)
+
+        for partno in range(batch_parts):
+            rc = zmq_msg_init_size(&data[partno].frame, data[partno].msg_c_len)
+            if rc < 0:
+                # Close already initialized messages and break the loop
+                for partno in range(partno):
+                    zmq_msg_close(&data[partno].frame)
+                break
+
+        _check_rc(rc)
+
+        with nogil:
+            # Copy and send message parts
+            for partno in range(batch_parts):
+                memcpy(zmq_msg_data(&data[partno].frame), data[partno].msg_c, zmq_msg_size(&data[partno].frame))
+                if last_batch and partno >= (batch_parts - 1):
+                    # Last part, uses given flags
+                    part_flags = flags
+                else:
+                    part_flags = flags | ZMQ_SNDMORE
+                rc = zmq_msg_send(&data[partno].frame, handle, part_flags)
+                if rc < 0:
+                    break
+
+            rc2 = 0
+            for partno in range(batch_parts):
+                rc3 = zmq_msg_close(&data[partno].frame)
+                if rc3 < 0 and rc2 == 0:
+                    rc2 = rc3
+            if rc2 == 0:
+                rc2 = rc3
+
+        _check_rc(rc)
+        _check_rc(rc2)
+        base_part += batch_parts
 
 
 cdef class Socket:
@@ -239,26 +318,26 @@ cdef class Socket:
     A 0MQ socket.
 
     These objects will generally be constructed via the socket() method of a Context object.
-    
+
     Note: 0MQ Sockets are *not* threadsafe. **DO NOT** share them across threads.
-    
+
     Parameters
     ----------
     context : Context
         The 0MQ Context this Socket belongs to.
     socket_type : int
-        The socket type, which can be any of the 0MQ socket types: 
+        The socket type, which can be any of the 0MQ socket types:
         REQ, REP, PUB, SUB, PAIR, DEALER, ROUTER, PULL, PUSH, XPUB, XSUB.
-    
+
     See Also
     --------
     .Context.socket : method for creating a socket bound to a Context.
     """
-    
+
     # no-op for the signature
     def __init__(self, context=None, socket_type=-1, shadow=0):
         pass
-    
+
     def __cinit__(self, Context context=None, int socket_type=-1, size_t shadow=0, *args, **kwargs):
         cdef Py_ssize_t c_handle
 
@@ -283,28 +362,28 @@ cdef class Socket:
 
     def __dealloc__(self):
         """remove from context's list
-        
+
         But be careful that context might not exist if called during gc
         """
         if self.handle != NULL and not self._shadow and getpid() == self._pid:
             # during gc, self.context might be NULL
             if self.context and not self.context.closed:
                 self.context._remove_socket(self.handle)
-    
+
     @property
     def underlying(self):
         """The address of the underlying libzmq socket"""
         return <size_t> self.handle
-    
+
     @property
     def closed(self):
         return _check_closed_deep(self)
-    
+
     def close(self, linger=None):
         """s.close(linger=None)
 
         Close the socket.
-        
+
         If linger is specified, LINGER sockopt will be set prior to closing.
 
         This can be called to close the socket by hand. If this is not
@@ -314,11 +393,11 @@ cdef class Socket:
         cdef int rc=0
         cdef int linger_c
         cdef bint setlinger=False
-        
+
         if linger is not None:
             linger_c = linger
             setlinger=True
-        
+
         if self.handle != NULL and not self._closed and getpid() == self._pid:
             if setlinger:
                 zmq_setsockopt(self.handle, ZMQ_LINGER, &linger_c, sizeof(int))
@@ -344,9 +423,9 @@ cdef class Socket:
         option : int
             The option to set.  Available values will depend on your
             version of libzmq.  Examples include::
-            
+
                 zmq.SUBSCRIBE, UNSUBSCRIBE, IDENTITY, HWM, LINGER, FD
-        
+
         optval : int or bytes
             The value of the option to set.
         """
@@ -405,7 +484,7 @@ cdef class Socket:
         option : int
             The option to get.  Available values will depend on your
             version of libzmq.  Examples include::
-            
+
                 zmq.IDENTITY, HWM, LINGER, FD, EVENTS
 
         Returns
@@ -452,7 +531,7 @@ cdef class Socket:
             result = optval_int_c
 
         return result
-    
+
     def bind(self, addr):
         """s.bind(addr)
 
@@ -516,16 +595,16 @@ cdef class Socket:
         if not isinstance(addr, bytes):
             raise TypeError('expected str, got: %r' % addr)
         c_addr = addr
-        
+
         rc = zmq_connect(self.handle, c_addr)
         if rc != 0:
             raise ZMQError()
 
     def unbind(self, addr):
         """s.unbind(addr)
-        
+
         Unbind from an address (undoes a call to bind).
-        
+
         .. versionadded:: libzmq-3.2
         .. versionadded:: 13.0
 
@@ -547,7 +626,7 @@ cdef class Socket:
         if not isinstance(addr, bytes):
             raise TypeError('expected str, got: %r' % addr)
         c_addr = addr
-        
+
         rc = zmq_unbind(self.handle, c_addr)
         if rc != 0:
             raise ZMQError()
@@ -556,7 +635,7 @@ cdef class Socket:
         """s.disconnect(addr)
 
         Disconnect from a remote 0MQ socket (undoes a call to connect).
-        
+
         .. versionadded:: libzmq-3.2
         .. versionadded:: 13.0
 
@@ -570,7 +649,7 @@ cdef class Socket:
         """
         cdef int rc
         cdef char* c_addr
-        
+
         _check_version((3,2), "disconnect")
         _check_closed(self)
         if isinstance(addr, unicode):
@@ -578,7 +657,7 @@ cdef class Socket:
         if not isinstance(addr, bytes):
             raise TypeError('expected str, got: %r' % addr)
         c_addr = addr
-        
+
         rc = zmq_disconnect(self.handle, c_addr)
         if rc != 0:
             raise ZMQError()
@@ -588,13 +667,13 @@ cdef class Socket:
 
         Start publishing socket events on inproc.
         See libzmq docs for zmq_monitor for details.
-        
+
         While this function is available from libzmq 3.2,
         pyzmq cannot parse monitor messages from libzmq prior to 4.0.
-        
+
         .. versionadded: libzmq-3.2
         .. versionadded: 14.0
-        
+
         Parameters
         ----------
         addr : str
@@ -606,7 +685,7 @@ cdef class Socket:
         """
         cdef int rc, c_flags
         cdef char* c_addr = NULL
-        
+
         _check_version((3,2), "monitor")
         if addr is not None:
             if isinstance(addr, unicode):
@@ -622,7 +701,7 @@ cdef class Socket:
     # Sending and receiving messages
     #-------------------------------------------------------------------------
 
-    cpdef object send(self, object data, int flags=0, copy=True, track=False):
+    cpdef object send(self, object data, int flags=0, bint copy=True, bint track=False):
         """s.send(data, flags=0, copy=True, track=False)
 
         Send a message on this socket.
@@ -648,7 +727,7 @@ cdef class Socket:
         MessageTracker : if track and not copy
             a MessageTracker object, whose `pending` property will
             be True until the send is completed.
-        
+
         Raises
         ------
         TypeError
@@ -657,13 +736,13 @@ cdef class Socket:
             If `track=True`, but an untracked Frame is passed.
         ZMQError
             If the send does not succeed for any reason.
-        
+
         """
         _check_closed(self)
-        
+
         if isinstance(data, unicode):
             raise TypeError("unicode not allowed, use send_string")
-        
+
         if copy:
             # msg.bytes never returns the input data object
             # it is always a copy, but always the same copy
@@ -679,7 +758,54 @@ cdef class Socket:
                 msg = Frame(data, track=track)
             return _send_frame(self.handle, msg, flags)
 
-    cpdef object recv(self, int flags=0, copy=True, track=False):
+    cpdef object send_multipart(self, msg_parts, int flags=0, bint copy=True, bint track=False):
+        """send a sequence of buffers as a multipart message
+
+        The zmq.SNDMORE flag is added to all msg parts before the last.
+
+        Parameters
+        ----------
+        msg_parts : iterable
+            A sequence of objects to send as a multipart message. Each element
+            can be any sendable object (Frame, bytes, buffer-providers)
+        flags : int, optional
+            SNDMORE is handled automatically for frames before the last.
+        copy : bool, optional
+            Should the frame(s) be sent in a copying or non-copying manner.
+        track : bool, optional
+            Should the frame(s) be tracked for notification that ZMQ has
+            finished with it (ignored if copy=True).
+
+        Returns
+        -------
+        None : if copy or not track
+        MessageTracker : if track and not copy
+            a MessageTracker object, whose `pending` property will
+            be True until the last send is completed.
+        """
+        if copy:
+            return _send_multipart_copy(self.handle, msg_parts, flags)
+        else:
+            for data in msg_parts[:-1]:
+                if isinstance(data, Frame):
+                    if track and not data.tracker:
+                        raise ValueError('Not a tracked message')
+                    msg = data
+                else:
+                    msg = Frame(data, track=track)
+                _send_frame(self.handle, msg, flags|ZMQ_SNDMORE)
+
+            data = msg_parts[-1]
+            if isinstance(data, Frame):
+                if track and not data.tracker:
+                    raise ValueError('Not a tracked message')
+                msg = data
+            else:
+                msg = Frame(data, track=track)
+            return _send_frame(self.handle, msg, flags)
+
+
+    cpdef object recv(self, int flags=0, bint copy=True, bint track=False):
         """s.recv(flags=0, copy=True, track=False)
 
         Receive a message.
@@ -704,14 +830,14 @@ cdef class Socket:
         msg : bytes, Frame
             The received message frame.  If `copy` is False, then it will be a Frame,
             otherwise it will be bytes.
-            
+
         Raises
         ------
         ZMQError
             for any of the reasons zmq_msg_recv might fail.
         """
         _check_closed(self)
-        
+
         if copy:
             return _recv_copy(self.handle, flags)
         else:
@@ -724,8 +850,8 @@ cdef class Socket:
 
         Receive all available messages from s and send them
         to s2 in a tight loop, return when no more messages
-        are available to be sent or an error arises. Will not 
-        raise zmq.Again when there's no more messages to 
+        are available to be sent or an error arises. Will not
+        raise zmq.Again when there's no more messages to
         retrieve, but it might if they cannot be sent.
 
         Parameters
@@ -739,7 +865,7 @@ cdef class Socket:
         ------
         ZMQError
             always with the first error, except it will not raise
-            zmq.Again when there's no more messages to retrieve, 
+            zmq.Again when there's no more messages to retrieve,
             but it might if they cannot be sent.
         """
         _proxy_step(self.handle, other.handle, max_loops)

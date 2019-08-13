@@ -10,6 +10,23 @@ This is a coarse summary of changes in pyzmq versions.  For a real changelog, co
 `git log <https://github.com/zeromq/pyzmq/commits>`_
 
 
+14.4.2j
+=======
+
+Optimizations
+
+- send_multipart and recv_multipart got an accelerated implementation in the
+  cython backend with less overhead and GIL contention
+
+14.4.1j
+=======
+
+Optimizations
+
+- Backends may now implement ``proxy_to``, an operation that will read from a socket
+  and copy everything to another in an optimized fashion. Implemented an optimized
+  version in the cython backend.
+
 14.4.1
 ======
 

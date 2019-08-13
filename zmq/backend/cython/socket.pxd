@@ -42,7 +42,9 @@ cdef class Socket:
     cdef int _pid               # the pid of the process which created me (for fork safety)
 
     # cpdef methods for direct-cython access:
-    cpdef object send(self, object data, int flags=*, copy=*, track=*)
-    cpdef object recv(self, int flags=*, copy=*, track=*)
+    cpdef object send(self, object data, int flags=*, bint copy=*, bint track=*)
+    cpdef object send_multipart(self, object msg_parts, int flags=*, bint copy=*, bint track=*)
+    cpdef object recv(self, int flags=*, bint copy=*, bint track=*)
+    #cpdef object recv_multipart(self, int flags=*, bint copy=*, bint track=*)
     cpdef object proxy_to(self, Socket other, int max_loops=*)
 
