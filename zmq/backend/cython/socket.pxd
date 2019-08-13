@@ -45,6 +45,6 @@ cdef class Socket:
     cpdef object send(self, object data, int flags=*, bint copy=*, bint track=*)
     cpdef object send_multipart(self, object msg_parts, int flags=*, bint copy=*, bint track=*)
     cpdef object recv(self, int flags=*, bint copy=*, bint track=*)
-    #cpdef object recv_multipart(self, int flags=*, bint copy=*, bint track=*)
+    cpdef object recv_multipart(self, int flags=*, bint copy=*, bint track=*)
     cpdef object proxy_to(self, Socket other, int max_loops=*)
 

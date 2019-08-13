@@ -845,6 +845,57 @@ cdef class Socket:
             frame.more = self.getsockopt(zmq.RCVMORE)
             return frame
 
+    cpdef object recv_multipart(self, int flags=0, bint copy=True, bint track=False):
+        """receive a multipart message as a list of bytes or Frame objects
+
+        Parameters
+        ----------
+        flags : int, optional
+            Any supported flag: NOBLOCK. If NOBLOCK is set, this method
+            will raise a ZMQError with EAGAIN if a message is not ready.
+            If NOBLOCK is not set, then this method will block until a
+            message arrives.
+        copy : bool, optional
+            Should the message frame(s) be received in a copying or non-copying manner?
+            If False a Frame object is returned for each part, if True a copy of
+            the bytes is made for each frame.
+        track : bool, optional
+            Should the message frame(s) be tracked for notification that ZMQ has
+            finished with it? (ignored if copy=True)
+
+        Returns
+        -------
+        msg_parts : list
+            A list of frames in the multipart message; either Frames or bytes,
+            depending on `copy`.
+
+        """
+        cdef bint more = True
+        cdef list parts
+        cdef int64_t sendmore = 0
+        cdef size_t sz = sizeof(int64_t)
+
+        _check_closed(self)
+
+        parts = []
+
+        while more:
+            if copy:
+                frame = _recv_copy(self.handle, flags)
+            else:
+                frame = _recv_frame(self.handle, flags, track)
+
+            rc = zmq_getsockopt(self.handle, ZMQ_RCVMORE, <void *>&sendmore, &sz)
+            _check_rc(rc)
+            more = sendmore != 0
+
+            if not copy:
+                frame.more = more
+
+            parts.append(frame)
+
+        return parts
+
     cpdef object proxy_to(self, Socket other, int max_loops=0):
         """s.proxy_to(s2)
 
