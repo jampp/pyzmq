@@ -256,6 +256,9 @@ cdef inline object _send_multipart_copy(void *handle, object msg_parts, int flag
     num_parts = len(msg_parts)
     base_part = 0
 
+    if num_parts == 0:
+        raise IndexError("Illegal zero-part message")
+
     while base_part < num_parts:
         # copy to c array:
         batch_parts = num_parts - base_part
