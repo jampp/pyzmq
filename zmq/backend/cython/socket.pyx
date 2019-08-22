@@ -208,29 +208,111 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
         _raise_errno(errno)
     return 0
 
+cdef struct zmq_part_data_t:
+    zmq_msg_t frame
+    char *msg_c
+    Py_ssize_t msg_c_len
+
+cdef inline void zmq_part_data_init(zmq_part_data_t *part):
+    part[0].msg_c = NULL
+    part[0].msg_c_len = 0
+
+cdef inline int zmq_part_data_asbuffer_r(zmq_part_data_t *part, object msg) except -1:
+    asbuffer_r(msg, <void **>&part[0].msg_c, &part[0].msg_c_len)
+    return 0
+
 cdef inline object _send_copy(void *handle, object msg, int flags=0):
     """Send a message on this socket by copying its content."""
     cdef int rc, rc2
-    cdef zmq_msg_t data
-    cdef char *msg_c
-    cdef Py_ssize_t msg_c_len=0
+    cdef zmq_part_data_t data
 
     # copy to c array:
-    asbuffer_r(msg, <void **>&msg_c, &msg_c_len)
+    zmq_part_data_init(&data)
+    zmq_part_data_asbuffer_r(&data, msg)
 
     # Copy the msg before sending. This avoids any complications with
     # the GIL, etc.
     # If zmq_msg_init_* fails we must not call zmq_msg_close (Bus Error)
-    rc = zmq_msg_init_size(&data, msg_c_len)
+    rc = zmq_msg_init_size(&data.frame, data.msg_c_len)
 
     _check_rc(rc)
 
     with nogil:
-        memcpy(zmq_msg_data(&data), msg_c, zmq_msg_size(&data))
-        rc = zmq_msg_send(&data, handle, flags)
-        rc2 = zmq_msg_close(&data)
+        memcpy(zmq_msg_data(&data.frame), data.msg_c, zmq_msg_size(&data.frame))
+        rc = zmq_msg_send(&data.frame, handle, flags)
+        rc2 = zmq_msg_close(&data.frame)
     _check_rc(rc)
     _check_rc(rc2)
+
+cdef inline object _send_multipart_copy(void *handle, object msg_parts, int flags=0):
+    """Send a multipart message on this socket by copying its content."""
+    cdef int rc, rc2, rc3
+    cdef Py_ssize_t num_parts, base_part, batch_parts, partno
+    cdef int part_flags
+    cdef bint last_batch
+    cdef zmq_part_data_t data[32]
+    cdef object obj
+
+    num_parts = len(msg_parts)
+    base_part = 0
+
+    if num_parts == 0:
+        raise IndexError("Illegal zero-part message")
+
+    while base_part < num_parts:
+        # copy to c array:
+        batch_parts = num_parts - base_part
+        if batch_parts > 32:
+            batch_parts = 32
+            last_batch = False
+        else:
+            last_batch = True
+
+        # Copy the msg before sending. This avoids any complications with
+        # the GIL, etc.
+        # If zmq_msg_init_* fails we must not call zmq_msg_close (Bus Error)
+
+        for partno in range(batch_parts):
+            obj = msg_parts[base_part + partno]
+            if isinstance(obj, Frame):
+                obj = obj.buffer
+            zmq_part_data_init(&data[partno])
+            zmq_part_data_asbuffer_r(&data[partno], obj)
+
+        for partno in range(batch_parts):
+            rc = zmq_msg_init_size(&data[partno].frame, data[partno].msg_c_len)
+            if rc < 0:
+                # Close already initialized messages and break the loop
+                for partno in range(partno):
+                    zmq_msg_close(&data[partno].frame)
+                break
+
+        _check_rc(rc)
+
+        with nogil:
+            # Copy and send message parts
+            for partno in range(batch_parts):
+                memcpy(zmq_msg_data(&data[partno].frame), data[partno].msg_c, zmq_msg_size(&data[partno].frame))
+                if last_batch and partno >= (batch_parts - 1):
+                    # Last part, uses given flags
+                    part_flags = flags
+                else:
+                    part_flags = flags | ZMQ_SNDMORE
+                rc = zmq_msg_send(&data[partno].frame, handle, part_flags)
+                if rc < 0:
+                    break
+
+            rc2 = 0
+            for partno in range(batch_parts):
+                rc3 = zmq_msg_close(&data[partno].frame)
+                if rc3 < 0 and rc2 == 0:
+                    rc2 = rc3
+            if rc2 == 0:
+                rc2 = rc3
+
+        _check_rc(rc)
+        _check_rc(rc2)
+        base_part += batch_parts
 
 
 cdef class Socket:
@@ -622,7 +704,7 @@ cdef class Socket:
     # Sending and receiving messages
     #-------------------------------------------------------------------------
 
-    cpdef object send(self, object data, int flags=0, copy=True, track=False):
+    cpdef object send(self, object data, int flags=0, bint copy=True, bint track=False):
         """s.send(data, flags=0, copy=True, track=False)
 
         Send a message on this socket.
@@ -679,7 +761,54 @@ cdef class Socket:
                 msg = Frame(data, track=track)
             return _send_frame(self.handle, msg, flags)
 
-    cpdef object recv(self, int flags=0, copy=True, track=False):
+    cpdef object send_multipart(self, msg_parts, int flags=0, bint copy=True, bint track=False):
+        """send a sequence of buffers as a multipart message
+
+        The zmq.SNDMORE flag is added to all msg parts before the last.
+
+        Parameters
+        ----------
+        msg_parts : iterable
+            A sequence of objects to send as a multipart message. Each element
+            can be any sendable object (Frame, bytes, buffer-providers)
+        flags : int, optional
+            SNDMORE is handled automatically for frames before the last.
+        copy : bool, optional
+            Should the frame(s) be sent in a copying or non-copying manner.
+        track : bool, optional
+            Should the frame(s) be tracked for notification that ZMQ has
+            finished with it (ignored if copy=True).
+
+        Returns
+        -------
+        None : if copy or not track
+        MessageTracker : if track and not copy
+            a MessageTracker object, whose `pending` property will
+            be True until the last send is completed.
+        """
+        if copy:
+            return _send_multipart_copy(self.handle, msg_parts, flags)
+        else:
+            for data in msg_parts[:-1]:
+                if isinstance(data, Frame):
+                    if track and not data.tracker:
+                        raise ValueError('Not a tracked message')
+                    msg = data
+                else:
+                    msg = Frame(data, track=track)
+                _send_frame(self.handle, msg, flags|ZMQ_SNDMORE)
+
+            data = msg_parts[-1]
+            if isinstance(data, Frame):
+                if track and not data.tracker:
+                    raise ValueError('Not a tracked message')
+                msg = data
+            else:
+                msg = Frame(data, track=track)
+            return _send_frame(self.handle, msg, flags)
+
+
+    cpdef object recv(self, int flags=0, bint copy=True, bint track=False):
         """s.recv(flags=0, copy=True, track=False)
 
         Receive a message.
@@ -719,13 +848,64 @@ cdef class Socket:
             frame.more = self.getsockopt(zmq.RCVMORE)
             return frame
 
+    cpdef object recv_multipart(self, int flags=0, bint copy=True, bint track=False):
+        """receive a multipart message as a list of bytes or Frame objects
+
+        Parameters
+        ----------
+        flags : int, optional
+            Any supported flag: NOBLOCK. If NOBLOCK is set, this method
+            will raise a ZMQError with EAGAIN if a message is not ready.
+            If NOBLOCK is not set, then this method will block until a
+            message arrives.
+        copy : bool, optional
+            Should the message frame(s) be received in a copying or non-copying manner?
+            If False a Frame object is returned for each part, if True a copy of
+            the bytes is made for each frame.
+        track : bool, optional
+            Should the message frame(s) be tracked for notification that ZMQ has
+            finished with it? (ignored if copy=True)
+
+        Returns
+        -------
+        msg_parts : list
+            A list of frames in the multipart message; either Frames or bytes,
+            depending on `copy`.
+
+        """
+        cdef bint more = True
+        cdef list parts
+        cdef int64_t sendmore = 0
+        cdef size_t sz = sizeof(int64_t)
+
+        _check_closed(self)
+
+        parts = []
+
+        while more:
+            if copy:
+                frame = _recv_copy(self.handle, flags)
+            else:
+                frame = _recv_frame(self.handle, flags, track)
+
+            rc = zmq_getsockopt(self.handle, ZMQ_RCVMORE, <void *>&sendmore, &sz)
+            _check_rc(rc)
+            more = sendmore != 0
+
+            if not copy:
+                frame.more = more
+
+            parts.append(frame)
+
+        return parts
+
     cpdef object proxy_to(self, Socket other, int max_loops=0):
         """s.proxy_to(s2)
 
         Receive all available messages from s and send them
         to s2 in a tight loop, return when no more messages
-        are available to be sent or an error arises. Will not 
-        raise zmq.Again when there's no more messages to 
+        are available to be sent or an error arises. Will not
+        raise zmq.Again when there's no more messages to
         retrieve, but it might if they cannot be sent.
 
         Parameters

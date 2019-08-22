@@ -247,78 +247,80 @@ class Socket(SocketBase, AttributeSetter):
     # Sending and receiving messages
     #-------------------------------------------------------------------------
 
-    def send_multipart(self, msg_parts, flags=0, copy=True, track=False):
-        """send a sequence of buffers as a multipart message
-        
-        The zmq.SNDMORE flag is added to all msg parts before the last.
+    if not hasattr(SocketBase, 'send_multipart'):
+        def send_multipart(self, msg_parts, flags=0, copy=True, track=False):
+            """send a sequence of buffers as a multipart message
 
-        Parameters
-        ----------
-        msg_parts : iterable
-            A sequence of objects to send as a multipart message. Each element
-            can be any sendable object (Frame, bytes, buffer-providers)
-        flags : int, optional
-            SNDMORE is handled automatically for frames before the last.
-        copy : bool, optional
-            Should the frame(s) be sent in a copying or non-copying manner.
-        track : bool, optional
-            Should the frame(s) be tracked for notification that ZMQ has
-            finished with it (ignored if copy=True).
-    
-        Returns
-        -------
-        None : if copy or not track
-        MessageTracker : if track and not copy
-            a MessageTracker object, whose `pending` property will
-            be True until the last send is completed.
-        """
-        for msg in msg_parts[:-1]:
-            self.send(msg, SNDMORE|flags, copy=copy, track=track)
-        # Send the last part without the extra SNDMORE flag.
-        return self.send(msg_parts[-1], flags, copy=copy, track=track)
+            The zmq.SNDMORE flag is added to all msg parts before the last.
 
-    def recv_multipart(self, flags=0, copy=True, track=False):
-        """receive a multipart message as a list of bytes or Frame objects
+            Parameters
+            ----------
+            msg_parts : iterable
+                A sequence of objects to send as a multipart message. Each element
+                can be any sendable object (Frame, bytes, buffer-providers)
+            flags : int, optional
+                SNDMORE is handled automatically for frames before the last.
+            copy : bool, optional
+                Should the frame(s) be sent in a copying or non-copying manner.
+            track : bool, optional
+                Should the frame(s) be tracked for notification that ZMQ has
+                finished with it (ignored if copy=True).
 
-        Parameters
-        ----------
-        flags : int, optional
-            Any supported flag: NOBLOCK. If NOBLOCK is set, this method
-            will raise a ZMQError with EAGAIN if a message is not ready.
-            If NOBLOCK is not set, then this method will block until a
-            message arrives.
-        copy : bool, optional
-            Should the message frame(s) be received in a copying or non-copying manner?
-            If False a Frame object is returned for each part, if True a copy of
-            the bytes is made for each frame.
-        track : bool, optional
-            Should the message frame(s) be tracked for notification that ZMQ has
-            finished with it? (ignored if copy=True)
-        
-        Returns
-        -------
-        msg_parts : list
-            A list of frames in the multipart message; either Frames or bytes,
-            depending on `copy`.
-    
-        """
-        parts = [self.recv(flags, copy=copy, track=track)]
-        # have first part already, only loop while more to receive
-        while self.getsockopt(zmq.RCVMORE):
-            part = self.recv(flags, copy=copy, track=track)
-            parts.append(part)
-    
-        return parts
+            Returns
+            -------
+            None : if copy or not track
+            MessageTracker : if track and not copy
+                a MessageTracker object, whose `pending` property will
+                be True until the last send is completed.
+            """
+            for msg in msg_parts[:-1]:
+                self.send(msg, SNDMORE|flags, copy=copy, track=track)
+            # Send the last part without the extra SNDMORE flag.
+            return self.send(msg_parts[-1], flags, copy=copy, track=track)
+
+    if not hasattr(SocketBase, 'recv_multipart'):
+        def recv_multipart(self, flags=0, copy=True, track=False):
+            """receive a multipart message as a list of bytes or Frame objects
+
+            Parameters
+            ----------
+            flags : int, optional
+                Any supported flag: NOBLOCK. If NOBLOCK is set, this method
+                will raise a ZMQError with EAGAIN if a message is not ready.
+                If NOBLOCK is not set, then this method will block until a
+                message arrives.
+            copy : bool, optional
+                Should the message frame(s) be received in a copying or non-copying manner?
+                If False a Frame object is returned for each part, if True a copy of
+                the bytes is made for each frame.
+            track : bool, optional
+                Should the message frame(s) be tracked for notification that ZMQ has
+                finished with it? (ignored if copy=True)
+
+            Returns
+            -------
+            msg_parts : list
+                A list of frames in the multipart message; either Frames or bytes,
+                depending on `copy`.
+
+            """
+            parts = [self.recv(flags, copy=copy, track=track)]
+            # have first part already, only loop while more to receive
+            while self.getsockopt(zmq.RCVMORE):
+                part = self.recv(flags, copy=copy, track=track)
+                parts.append(part)
+
+            return parts
 
     if not hasattr(SocketBase, 'proxy_to'):
         # Fallback implementation
         def proxy_to(self, other, max_loops = 0):
             """s.proxy_to(other)
-    
+
             Receive all available messages from s and send them
             to "other" in a tight loop, return when no more messages
-            are available to be sent or an error arises. Will not 
-            raise zmq.Again when there's no more messages to 
+            are available to be sent or an error arises. Will not
+            raise zmq.Again when there's no more messages to
             retrieve, but it might if they cannot be sent.
 
             Parameters
@@ -331,8 +333,8 @@ class Socket(SocketBase, AttributeSetter):
             Raises
             ------
             ZMQError
-                always with the first error, except it will not 
-                raise zmq.Again when there's no more messages to 
+                always with the first error, except it will not
+                raise zmq.Again when there's no more messages to
                 retrieve, but it might if they cannot be sent.
             """
             flags = zmq.NOBLOCK
