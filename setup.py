@@ -882,7 +882,7 @@ class TestCommand(Command):
             sys.exit(1)
 
         info(f"Testing pyzmq-{zmq.pyzmq_version()} with libzmq-{zmq.zmq_version()}")
-        p = Popen([sys.executable, '-m', 'pytest', '-v', os.path.join('zmq', 'tests')])
+        p = Popen([sys.executable, '-m', 'pytest', '--assert=plain', '-v', os.path.join('zmq', 'tests')])
         p.wait()
         sys.exit(p.returncode)
 

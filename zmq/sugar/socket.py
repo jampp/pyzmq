@@ -807,6 +807,44 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         frames = self.recv_multipart(flags=flags, copy=copy)
         return self._deserialize(frames, deserialize)
 
+    if not hasattr(SocketBase, 'proxy_to'):
+        # Fallback implementation
+        def proxy_to(self, other, max_loops: int = 0):
+            """s.proxy_to(other)
+    
+            Receive all available messages from s and send them
+            to "other" in a tight loop, return when no more messages
+            are available to be sent or an error arises. Will not 
+            raise zmq.Again when there's no more messages to 
+            retrieve, but it might if they cannot be sent.
+
+            Parameters
+            ----------
+            other : socket to relay messages to
+
+            max_loops : maximum amount of messages to relay, defaults
+                to 0 which means infinity.
+    
+            Raises
+            ------
+            ZMQError
+                always with the first error, except it will not 
+                raise zmq.Again when there's no more messages to 
+                retrieve, but it might if they cannot be sent.
+            """
+            flags = zmq.NOBLOCK
+            copy = False
+            while 1:
+                try:
+                    msg = self.recv_multipart(flags, copy)
+                except zmq.Again:
+                    break
+                self.send_multipart(msg, flags, copy)
+                if max_loops > 0:
+                    max_loops -= 1
+                    if max_loops <= 0:
+                        break
+
     def send_string(
         self,
         u: str,
@@ -941,7 +979,7 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         msg = self.recv(flags)
         return self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs))
 
-    _poller_class = Poller
+    _poller_class : Optional[Callable] = None
 
     def poll(self, timeout=None, flags=zmq.POLLIN) -> int:
         """Poll the socket for events.
@@ -965,9 +1003,18 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         if self.closed:
             raise ZMQError(zmq.ENOTSUP)
 
-        p = self._poller_class()
-        p.register(self, flags)
-        evts = dict(p.poll(timeout))
+        poller_class = self._poller_class
+        if poller_class is not None:
+            p = poller_class()
+            p.register(self, flags)
+            evts = dict(p.poll(timeout))
+        else:
+            if timeout is None or timeout < 0:
+                timeout = -1
+            elif isinstance(timeout, float):
+                timeout = int(timeout)
+            evts = dict(zmq.zmq_poll([(self,flags)], timeout))
+
         # return 0 if no events, otherwise return event bitfield
         return evts.get(self, 0)
 
