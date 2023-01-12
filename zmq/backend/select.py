@@ -15,6 +15,7 @@ public_api = [
     'proxy',
     'proxy_steerable',
     'zmq_poll',
+    'PollerBase',
     'strerror',
     'zmq_errno',
     'has',

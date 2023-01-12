@@ -35,7 +35,7 @@ from cpython cimport (
     PyBytes_FromStringAndSize,
     PyBytes_Size,
 )
-from libc.errno cimport ENAMETOOLONG, ENOENT, ENOTSOCK
+from libc.errno cimport ENAMETOOLONG, ENOENT, ENOTSOCK, EAGAIN
 from libc.string cimport memcpy
 
 from zmq.utils.buffers cimport asbuffer_r
@@ -47,6 +47,9 @@ from .libzmq cimport (
     ZMQ_IDENTITY,
     ZMQ_LINGER,
     ZMQ_TYPE,
+    ZMQ_SNDMORE,
+    ZMQ_RCVMORE,
+    ZMQ_NOBLOCK,
     fd_t,
     int64_t,
     zmq_bind,
@@ -104,7 +107,7 @@ except:
 import zmq
 from zmq.constants import SocketOption, _OptType
 
-from .checkrc cimport _check_rc
+from .checkrc cimport _check_rc, _raise_errno
 
 from zmq.error import InterruptedSystemCall, ZMQBindError, ZMQError, _check_version
 
@@ -185,6 +188,7 @@ cdef inline Frame _recv_frame(void *handle, int flags=0, track=False):
 cdef inline object _recv_copy(void *handle, int flags=0):
     """Receive a message and return a copy"""
     cdef zmq_msg_t zmq_msg
+    cdef int rc
     rc = zmq_msg_init (&zmq_msg)
     _check_rc(rc)
     while True:
@@ -257,6 +261,59 @@ cdef inline object _send_copy(void *handle, object msg, int flags=0):
             rc = zmq_msg_close(&data)
             _check_rc(rc)
             break
+
+
+cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) except 1:
+    """Receive all available messages from handle_from and send them
+    to handle_to in a tight loop, return when no more messages
+    are available to be sent or an error arises. Will not raise
+    zmq.Again when there's no more messages to retrieve, but it might
+    if they cannot be sent.
+    """
+    cdef zmq_msg_t zmq_msg
+    cdef int rc, errno
+    cdef int flags
+    cdef size_t sz
+    cdef int64_t sendmore
+
+    with nogil:
+        sendmore = 0
+        sz = sizeof(int64_t)
+        zmq_msg_init (&zmq_msg)
+        while 1:
+            if sendmore:
+                flags = 0
+            else:
+                flags = ZMQ_NOBLOCK
+            rc = zmq_msg_recv(&zmq_msg, handle_from, flags)
+            if rc < 0:
+                errno = zmq_errno()
+                if errno == EAGAIN:
+                    # swallow EAGAIN
+                    rc = 0
+                break
+            else:
+                rc = zmq_getsockopt(handle_from, ZMQ_RCVMORE, <void *>&sendmore, &sz)
+                if rc < 0:
+                    errno = zmq_errno()
+                    break
+                else:
+                    if sendmore:
+                        flags |= ZMQ_SNDMORE
+                    rc = zmq_msg_send(&zmq_msg, handle_to, flags)
+                    if rc < 0:
+                        errno = zmq_errno()
+                        break
+                    elif not sendmore and max_loops > 0:
+                        max_loops -= 1
+                        if max_loops <= 0:
+                            break
+        zmq_msg_close(&zmq_msg)
+
+    if rc < 0:
+        _raise_errno(errno)
+    return 0
+
 
 cdef inline object _getsockopt(void *handle, int option, void *optval, size_t *sz):
     """getsockopt, retrying interrupted calls
@@ -847,6 +904,31 @@ cdef class Socket:
             frame = _recv_frame(self.handle, flags, track)
             frame.more = self.get(zmq.RCVMORE)
             return frame
+
+    cpdef object proxy_to(self, Socket other, int max_loops=0):
+        """s.proxy_to(s2)
+
+        Receive all available messages from s and send them
+        to s2 in a tight loop, return when no more messages
+        are available to be sent or an error arises. Will not 
+        raise zmq.Again when there's no more messages to 
+        retrieve, but it might if they cannot be sent.
+
+        Parameters
+        ----------
+        other : socket to relay messages to
+
+        max_loops : maximum amount of messages to relay, defaults
+            to 0 which means infinity.
+
+        Raises
+        ------
+        ZMQError
+            always with the first error, except it will not raise
+            zmq.Again when there's no more messages to retrieve, 
+            but it might if they cannot be sent.
+        """
+        _proxy_step(self.handle, other.handle, max_loops)
 
 
 __all__ = ['Socket', 'IPC_PATH_MAX_LEN']

@@ -13,7 +13,16 @@ from zmq.constants import POLLERR, POLLIN, POLLOUT
 # -----------------------------------------------------------------------------
 
 
-class Poller:
+try:
+    from zmq.backend import PollerBase
+except ImportError:
+    class PollerBase(object):  # type: ignore
+        def on_modified(self):
+            pass
+        _poll = staticmethod(zmq_poll)
+
+
+class Poller(PollerBase):
     """A stateful poll interface that mirrors Python's built-in poll."""
 
     sockets: List[Tuple[Any, int]]
@@ -50,9 +59,11 @@ class Poller:
                 idx = len(self.sockets)
                 self.sockets.append((socket, flags))
                 self._map[socket] = idx
+            self.on_modified()
         elif socket in self._map:
             # uregister sockets registered with no events
             self.unregister(socket)
+            self.on_modified()
         else:
             # ignore new sockets with no events
             pass
@@ -60,6 +71,7 @@ class Poller:
     def modify(self, socket, flags=POLLIN | POLLOUT):
         """Modify the flags for an already registered 0MQ socket or native fd."""
         self.register(socket, flags)
+        self.on_modified()
 
     def unregister(self, socket: Any):
         """Remove a 0MQ socket or native fd for I/O monitoring.
@@ -74,6 +86,7 @@ class Poller:
         # shift indices after deletion
         for socket, flags in self.sockets[idx:]:
             self._map[socket] -= 1
+        self.on_modified()
 
     def poll(self, timeout: Optional[int] = None) -> List[Tuple[Any, int]]:
         """Poll the registered 0MQ or native fds for I/O.
@@ -101,7 +114,7 @@ class Poller:
             timeout = -1
         elif isinstance(timeout, float):
             timeout = int(timeout)
-        return zmq_poll(self.sockets, timeout=timeout)
+        return self._poll(self.sockets, timeout)
 
 
 def select(rlist: List, wlist: List, xlist: List, timeout: Optional[float] = None):
