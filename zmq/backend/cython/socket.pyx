@@ -1023,7 +1023,7 @@ cdef class Socket:
             num_msg = len(msg_parts)
             flags_more = flags|ZMQ_SNDMORE
             for i, data in enumerate(msg_parts):
-                part_flags = flags_more if (i+1) >= num_msg else flags
+                part_flags = flags_more if (i+1) < num_msg else flags
                 if isinstance(data, Frame):
                     if track and not data.tracker:
                         raise ValueError('Not a tracked message')
