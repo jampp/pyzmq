@@ -26,7 +26,7 @@ from warnings import warn
 
 import zmq
 from zmq._typing import Literal
-from zmq.backend import Socket as SocketBase
+from zmq.backend import Socket as SocketBase, Frame as FrameBase
 from zmq.error import ZMQBindError, ZMQError
 from zmq.utils import jsonapi
 from zmq.utils.interop import cast_int_addr
@@ -676,7 +676,7 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
             DRAFT support for routing_id and group arguments.
         """
         if routing_id is not None:
-            if not isinstance(data, zmq.Frame):
+            if not isinstance(data, FrameBase):
                 data = zmq.Frame(
                     data,
                     track=track,
@@ -685,7 +685,7 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
                 )
             data.routing_id = routing_id
         if group is not None:
-            if not isinstance(data, zmq.Frame):
+            if not isinstance(data, FrameBase):
                 data = zmq.Frame(
                     data,
                     track=track,
@@ -695,121 +695,166 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
             data.group = group
         return super().send(data, flags=flags, copy=copy, track=track)
 
-    def send_multipart(
-        self,
-        msg_parts: Sequence,
-        flags: int = 0,
-        copy: bool = True,
-        track: bool = False,
-        **kwargs,
-    ):
-        """Send a sequence of buffers as a multipart message.
+    if not hasattr(SocketBase, "send_multipart"):
+        def send_multipart(
+            self,
+            msg_parts: Sequence,
+            flags: int = 0,
+            copy: bool = True,
+            track: bool = False,
+            **kwargs,
+        ):
+            """Send a sequence of buffers as a multipart message.
 
-        The zmq.SNDMORE flag is added to all msg parts before the last.
+            The zmq.SNDMORE flag is added to all msg parts before the last.
 
-        Parameters
-        ----------
-        msg_parts : iterable
-            A sequence of objects to send as a multipart message. Each element
-            can be any sendable object (Frame, bytes, buffer-providers)
-        flags : int, optional
-            Any valid flags for :func:`Socket.send`.
-            SNDMORE is added automatically for frames before the last.
-        copy : bool, optional
-            Should the frame(s) be sent in a copying or non-copying manner.
-            If copy=False, frames smaller than self.copy_threshold bytes
-            will be copied anyway.
-        track : bool, optional
-            Should the frame(s) be tracked for notification that ZMQ has
-            finished with it (ignored if copy=True).
+            Parameters
+            ----------
+            msg_parts : iterable
+                A sequence of objects to send as a multipart message. Each element
+                can be any sendable object (Frame, bytes, buffer-providers)
+            flags : int, optional
+                Any valid flags for :func:`Socket.send`.
+                SNDMORE is added automatically for frames before the last.
+            copy : bool, optional
+                Should the frame(s) be sent in a copying or non-copying manner.
+                If copy=False, frames smaller than self.copy_threshold bytes
+                will be copied anyway.
+            track : bool, optional
+                Should the frame(s) be tracked for notification that ZMQ has
+                finished with it (ignored if copy=True).
 
-        Returns
-        -------
-        None : if copy or not track
-        MessageTracker : if track and not copy
-            a MessageTracker object, whose `pending` property will
-            be True until the last send is completed.
-        """
-        # typecheck parts before sending:
-        for i, msg in enumerate(msg_parts):
-            if isinstance(msg, (zmq.Frame, bytes, memoryview)):
-                continue
-            try:
-                memoryview(msg)
-            except Exception:
-                rmsg = repr(msg)
-                if len(rmsg) > 32:
-                    rmsg = rmsg[:32] + '...'
-                raise TypeError(
-                    "Frame %i (%s) does not support the buffer interface."
-                    % (
-                        i,
-                        rmsg,
+            Returns
+            -------
+            None : if copy or not track
+            MessageTracker : if track and not copy
+                a MessageTracker object, whose `pending` property will
+                be True until the last send is completed.
+            """
+            # typecheck parts before sending:
+            MsgPartTypes = (FrameBase, bytes, memoryview)
+            for i, msg in enumerate(msg_parts):
+                if isinstance(msg, MsgPartTypes):
+                    continue
+                try:
+                    memoryview(msg)
+                except Exception:
+                    rmsg = repr(msg)
+                    if len(rmsg) > 32:
+                        rmsg = rmsg[:32] + '...'
+                    raise TypeError(
+                        "Frame %i (%s) does not support the buffer interface."
+                        % (
+                            i,
+                            rmsg,
+                        )
                     )
-                )
-        for msg in msg_parts[:-1]:
-            self.send(msg, zmq.SNDMORE | flags, copy=copy, track=track)
-        # Send the last part without the extra SNDMORE flag.
-        return self.send(msg_parts[-1], flags, copy=copy, track=track)
 
-    @overload
-    def recv_multipart(
-        self, flags: int = ..., *, copy: Literal[True], track: bool = ...
-    ) -> List[bytes]:
-        ...
+            send = self.send
+            more_flags = zmq.SNDMORE | flags
+            for msg in msg_parts[:-1]:
+                send(msg, more_flags, copy=copy, track=track)
+            # Send the last part without the extra SNDMORE flag.
+            return send(msg_parts[-1], flags, copy=copy, track=track)
 
-    @overload
-    def recv_multipart(
-        self, flags: int = ..., *, copy: Literal[False], track: bool = ...
-    ) -> List[zmq.Frame]:
-        ...
+    if not hasattr(SocketBase, "recv_multipart"):
+        @overload
+        def recv_multipart(
+            self, flags: int = ..., *, copy: Literal[True], track: bool = ...
+        ) -> List[bytes]:
+            ...
 
-    @overload
-    def recv_multipart(self, flags: int = ..., *, track: bool = ...) -> List[bytes]:
-        ...
+        @overload
+        def recv_multipart(
+            self, flags: int = ..., *, copy: Literal[False], track: bool = ...
+        ) -> List[zmq.Frame]:
+            ...
 
-    @overload
-    def recv_multipart(
-        self, flags: int = 0, copy: bool = True, track: bool = False
-    ) -> Union[List[zmq.Frame], List[bytes]]:
-        ...
+        @overload
+        def recv_multipart(self, flags: int = ..., *, track: bool = ...) -> List[bytes]:
+            ...
 
-    def recv_multipart(
-        self, flags: int = 0, copy: bool = True, track: bool = False
-    ) -> Union[List[zmq.Frame], List[bytes]]:
-        """Receive a multipart message as a list of bytes or Frame objects
+        @overload
+        def recv_multipart(
+            self, flags: int = 0, copy: bool = True, track: bool = False
+        ) -> Union[List[bytes], List[zmq.Frame], List[Union[zmq.Frame, bytes]]]:
+            ...
 
-        Parameters
-        ----------
-        flags : int, optional
-            Any valid flags for :func:`Socket.recv`.
-        copy : bool, optional
-            Should the message frame(s) be received in a copying or non-copying manner?
-            If False a Frame object is returned for each part, if True a copy of
-            the bytes is made for each frame.
-        track : bool, optional
-            Should the message frame(s) be tracked for notification that ZMQ has
-            finished with it? (ignored if copy=True)
+        def recv_multipart(
+            self, flags: int = 0, copy: bool = True, track: bool = False
+        ) -> Union[List[bytes], List[zmq.Frame], List[Union[zmq.Frame, bytes]]]:
+            """Receive a multipart message as a list of bytes or Frame objects
 
-        Returns
-        -------
-        msg_parts : list
-            A list of frames in the multipart message; either Frames or bytes,
-            depending on `copy`.
+            Parameters
+            ----------
+            flags : int, optional
+                Any valid flags for :func:`Socket.recv`.
+            copy : bool, optional
+                Should the message frame(s) be received in a copying or non-copying manner?
+                If False a Frame object is returned for each part, if True a copy of
+                the bytes is made for each frame.
+            track : bool, optional
+                Should the message frame(s) be tracked for notification that ZMQ has
+                finished with it? (ignored if copy=True)
 
-        Raises
-        ------
-        ZMQError
-            for any of the reasons :func:`~Socket.recv` might fail
-        """
-        parts = [self.recv(flags, copy=copy, track=track)]
-        # have first part already, only loop while more to receive
-        while self.getsockopt(zmq.RCVMORE):
-            part = self.recv(flags, copy=copy, track=track)
-            parts.append(part)
-        # cast List[Union] to Union[List]
-        # how do we get mypy to recognize that return type is invariant on `copy`?
-        return cast(Union[List[zmq.Frame], List[bytes]], parts)
+            Returns
+            -------
+            msg_parts : list
+                A list of frames in the multipart message; either Frames or bytes,
+                depending on `copy`.
+
+            Raises
+            ------
+            ZMQError
+                for any of the reasons :func:`~Socket.recv` might fail
+            """
+            parts = [self.recv(flags, copy=copy, track=track)]
+            # have first part already, only loop while more to receive
+            getsockopt = self.getsockopt
+            RCVMORE = zmq.RCVMORE
+            recv = self.recv
+            while getsockopt(RCVMORE):
+                part = recv(flags, copy=copy, track=track)
+                parts.append(part)
+            return parts
+
+    if not hasattr(SocketBase, 'proxy_to'):
+        # Fallback implementation
+        def proxy_to(self, other : "Socket", max_loops : int = 0) -> None:
+            """s.proxy_to(other)
+
+            Receive all available messages from s and send them
+            to "other" in a tight loop, return when no more messages
+            are available to be sent or an error arises. Will not
+            raise zmq.Again when there's no more messages to
+            retrieve, but it might if they cannot be sent.
+
+            Parameters
+            ----------
+            other : socket to relay messages to
+
+            max_loops : maximum amount of messages to relay, defaults
+                to 0 which means infinity.
+
+            Raises
+            ------
+            ZMQError
+                always with the first error, except it will not
+                raise zmq.Again when there's no more messages to
+                retrieve, but it might if they cannot be sent.
+            """
+            flags = zmq.NOBLOCK
+            copy = False
+            while 1:
+                try:
+                    msg = self.recv_multipart(flags, copy)
+                except zmq.Again:
+                    break
+                self.send_multipart(msg, flags, copy)
+                if max_loops > 0:
+                    max_loops -= 1
+                    if max_loops <= 0:
+                        break
 
     def _deserialize(
         self,
@@ -1017,7 +1062,7 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         msg = self.recv(flags)
         return self._deserialize(msg, lambda buf: jsonapi.loads(buf, **kwargs))
 
-    _poller_class = Poller
+    _poller_class : Optional[Type[Poller]] = None
 
     def poll(self, timeout=None, flags=zmq.POLLIN) -> int:
         """Poll the socket for events.
@@ -1041,9 +1086,18 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         if self.closed:
             raise ZMQError(zmq.ENOTSUP)
 
-        p = self._poller_class()
-        p.register(self, flags)
-        evts = dict(p.poll(timeout))
+        poller_class = self._poller_class
+        if poller_class is None:
+            if timeout is None or timeout < 0:
+                timeout = -1
+            elif isinstance(timeout, float):
+                timeout = int(timeout)
+            evts = dict(zmq.zmq_poll([(self, flags)], timeout))
+        else:
+            p = poller_class()
+            p.register(self, flags)
+            evts = dict(p.poll(timeout))
+
         # return 0 if no events, otherwise return event bitfield
         return evts.get(self, 0)
 

@@ -210,8 +210,7 @@ cdef class Frame:
         if self._failed_init:
             return
         # This simply decreases the 0MQ ref-count of zmq_msg.
-        with nogil:
-            rc = zmq_msg_close(&self.zmq_msg)
+        rc = zmq_msg_close(&self.zmq_msg)
         _check_rc(rc)
 
     # buffer interface code adapted from petsc4py by Lisandro Dalcin, a BSD project

@@ -11,6 +11,10 @@ _bytestr = bytes
 
 T = TypeVar("T")
 
+class PollerBase:
+    def on_modified(self) -> None: ...
+    def _poll(self, sockets: List[Any], timeout: Optional[int]) -> List[Tuple[Socket, int]]: ...
+
 class Frame:
     buffer: Any
     bytes: bytes
