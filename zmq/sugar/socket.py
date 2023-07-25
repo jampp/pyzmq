@@ -777,12 +777,12 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
         @overload
         def recv_multipart(
             self, flags: int = 0, copy: bool = True, track: bool = False
-        ) -> Union[List[bytes], List[zmq.Frame], List[Union[zmq.Frame, bytes]]]:
+        ) -> Union[List[bytes], List[zmq.Frame]]:
             ...
 
         def recv_multipart(
             self, flags: int = 0, copy: bool = True, track: bool = False
-        ) -> Union[List[bytes], List[zmq.Frame], List[Union[zmq.Frame, bytes]]]:
+        ) -> Union[List[bytes], List[zmq.Frame]]:
             """Receive a multipart message as a list of bytes or Frame objects
 
             Parameters
@@ -808,15 +808,17 @@ class Socket(SocketBase, AttributeSetter, Generic[ST]):
             ZMQError
                 for any of the reasons :func:`~Socket.recv` might fail
             """
-            parts = [self.recv(flags, copy=copy, track=track)]
             # have first part already, only loop while more to receive
             getsockopt = self.getsockopt
             RCVMORE = zmq.RCVMORE
             recv = self.recv
+            parts = [recv(flags, copy=copy, track=track)]
             while getsockopt(RCVMORE):
                 part = recv(flags, copy=copy, track=track)
                 parts.append(part)
-            return parts
+
+            # mypy doesn't get recv is invariant on copy
+            return parts #type: ignore
 
     if not hasattr(SocketBase, 'proxy_to'):
         # Fallback implementation
