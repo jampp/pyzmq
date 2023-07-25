@@ -26,10 +26,10 @@ cdef inline int _check_rc_nosig(int rc, bint error_without_errno=True) except -1
     return 0
 
 
-cdef inline bint _check_interrupted(int rc) nogil:
-    """internal utility for checking zmq return condition
+cdef inline bint _check_interrupted(int rc) noexcept nogil:
+    """internal utility for checking zmq interrupt condition
 
-    and raising the appropriate Exception class
+    Returns whether check_rc would raise InterruptedSystemCall
     """
     return rc == -1 and zmq_errno() == EINTR
 

@@ -36,7 +36,7 @@ from cpython cimport (
     PyBytes_Size,
     PyErr_CheckSignals,
 )
-from libc.errno cimport ENAMETOOLONG, ENOENT, ENOTSOCK, EINTR, EAGAIN
+from libc.errno cimport ENAMETOOLONG, ENOENT, ENOTSOCK, EAGAIN
 from libc.string cimport memcpy
 
 from zmq.utils.buffers cimport asbuffer_r
@@ -108,7 +108,7 @@ except:
 import zmq
 from zmq.constants import SocketOption, _OptType
 
-from .checkrc cimport _check_rc, _check_rc_nosig, _raise_errno_saved
+from .checkrc cimport _check_rc, _check_rc_nosig, _raise_errno_saved, _check_interrupted
 
 from zmq.error import InterruptedSystemCall, ZMQBindError, ZMQError, _check_version
 
@@ -196,7 +196,7 @@ cdef inline object _recv_copy(void *handle, int flags=0):
     with nogil:
         while True:
             rc = zmq_msg_recv(&zmq_msg, handle, flags)
-            if rc == -1 and zmq_errno() == EINTR:
+            if _check_interrupted(rc):
                 with gil:
                     PyErr_CheckSignals()
                 continue
@@ -259,7 +259,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
                 flags = ZMQ_NOBLOCK
             while 1:
                 rc = zmq_msg_recv(&zmq_msg, handle_from, flags)
-                if rc == -1 and zmq_errno() == EINTR:
+                if _check_interrupted(rc):
                     with gil:
                         PyErr_CheckSignals()
                     continue
@@ -274,7 +274,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
             else:
                 while 1:
                     rc = zmq_getsockopt(handle_from, ZMQ_RCVMORE, <void *>&sendmore, &sz)
-                    if rc == -1 and zmq_errno() == EINTR:
+                    if _check_interrupted(rc):
                         with gil:
                             PyErr_CheckSignals()
                         continue
@@ -288,7 +288,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
                         flags |= ZMQ_SNDMORE
                     while 1:
                         rc = zmq_msg_send(&zmq_msg, handle_to, flags)
-                        if rc == -1 and zmq_errno() == EINTR:
+                        if _check_interrupted(rc):
                             with gil:
                                 PyErr_CheckSignals()
                             continue
@@ -340,7 +340,7 @@ cdef inline object _send_copy(void *handle, object msg, int flags=0):
         memcpy(zmq_msg_data(&data.frame), data.msg_c, zmq_msg_size(&data.frame))
         while True:
             rc = zmq_msg_send(&data.frame, handle, flags)
-            if rc == -1 and zmq_errno() == EINTR:
+            if _check_interrupted(rc):
                 with gil:
                     PyErr_CheckSignals()
                 continue
@@ -408,7 +408,7 @@ cdef inline object _send_multipart_copy(void *handle, object msg_parts, int flag
                     part_flags = flags | ZMQ_SNDMORE
                 while True:
                     rc = zmq_msg_send(&data[partno].frame, handle, part_flags)
-                    if rc == -1 and zmq_errno() == EINTR:
+                    if _check_interrupted(rc):
                         with gil:
                             PyErr_CheckSignals()
                         continue
