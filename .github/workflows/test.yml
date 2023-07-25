@@ -32,16 +32,16 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          #- os: macos-13
-          #  python: 3.6
+          - os: macos-13
+            python: 3.6
 
-          #- os: macos-13
-          #  python: 3.11
-          #  zmq: bundled
+          - os: macos-13
+            python: 3.11
+            zmq: bundled
 
-          #- os: macos-13
-          #  python: pypy-3.9
-          #  zmq: bundled
+          - os: macos-13
+            python: pypy-3.9
+            zmq: bundled
 
           - os: ubuntu-20.04
             python: 3.6
