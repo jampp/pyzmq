@@ -49,9 +49,7 @@ from zmq.error import InterruptedSystemCall
 
 
 cdef inline object _zmq_poll(sockets, zmq_pollitem_t *pollitems, int nsockets, long timeout):
-    """zmq_poll(nsockets, pollitems, timeout)
-
-    Poll a set of 0MQ sockets, native file descs. or sockets.
+    """Poll a set of 0MQ sockets, native file descs. or sockets.
 
     Parameters
     ----------
