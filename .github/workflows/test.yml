@@ -105,8 +105,8 @@ jobs:
       - name: unparallel coverage
         if: startsWith(matrix.os, 'macos-')
         run: |
-          sed 's/#concurrency/concurrency/' .coveragerc > .coveragerc/save
-          mv .coveragerc/save .coveragerc
+          sed 's/#concurrency/concurrency/' .coveragerc > .coveragerc-save
+          mv .coveragerc-save .coveragerc
 
       - name: enable Cython coverage
         if: "! (startsWith(matrix.python, 'pypy') || startsWith(matrix.python, '3.12'))"
