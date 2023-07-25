@@ -58,6 +58,8 @@ cdef inline object _zmq_poll(sockets, zmq_pollitem_t *pollitems, int nsockets, l
     pollitems : list of tuples zmq_pollitem_t structs 
         Each element of this list contains a socket or file descriptor
         and a flags. The flags can be zmq.POLLIN (for detecting
+        for incoming messages), zmq.POLLOUT (for detecting that send is OK)
+        or zmq.POLLIN|zmq.POLLOUT for detecting both.
 
     timeout : int
         The number of milliseconds to poll for. Negative means no timeout.
