@@ -251,7 +251,7 @@ cdef inline int _proxy_step(void *handle_from, void *handle_to, int max_loops) e
     with nogil:
         sendmore = 0
         sz = sizeof(int64_t)
-        zmq_msg_init (&zmq_msg)
+        zmq_msg_init(&zmq_msg)
         while 1:
             if sendmore:
                 flags = 0
