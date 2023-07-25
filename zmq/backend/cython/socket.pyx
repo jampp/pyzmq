@@ -209,7 +209,7 @@ cdef inline object _recv_copy(void *handle, int flags=0):
 
     msg_bytes = copy_zmq_msg_bytes(&zmq_msg)
     rc2 = zmq_msg_close(&zmq_msg)
-    _check_rc_nosig(rc)
+    _check_rc_nosig(rc2)
 
     return msg_bytes
 
