@@ -2,10 +2,11 @@
 plugins = Cython.Coverage
 parallel = True
 branch = False
-#concurrency = thread, multiprocessing
+concurrency = thread, multiprocessing
 omit =
     zmq/eventloop/minitornado/*
     zmq/tests/*
+    zmq/backend/cython/checkrc.pxd
 
 [report]
 exclude_lines =
