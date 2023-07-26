@@ -403,12 +403,21 @@ class Socket:
         ZMQError
             for any of the reasons :func:`~Socket.recv` might fail
         """
-        # have first part already, only loop while more to receive
-        getsockopt = self.getsockopt
+        # Inline and specialize getsockopt to reuse pointers
         RCVMORE = zmq.RCVMORE
+        c_value_pointer, c_sizet_pointer = new_int_pointer()
+        sz = c_sizet_pointer[0]
+
+        def hasmore():
+            _retry_sys_call(
+                C.zmq_getsockopt, self._zmq_socket, RCVMORE, c_value_pointer, c_sizet_pointer
+            )
+            return int(c_value_pointer[0])
+
+        # have first part already, only loop while more to receive
         recv = self.recv
         parts = [recv(flags, copy=copy, track=track)]
-        while getsockopt(RCVMORE):
+        while hasmore():
             part = recv(flags, copy=copy, track=track)
             parts.append(part)
         return parts
