@@ -13,13 +13,7 @@ from zmq.constants import POLLERR, POLLIN, POLLOUT
 # -----------------------------------------------------------------------------
 
 
-try:
-    from zmq.backend import PollerBase
-except ImportError:
-    class PollerBase(object): # type: ignore # known issue with mypy
-        def on_modified(self):
-            pass
-        _poll = staticmethod(zmq_poll)
+from zmq.backend import PollerBase
 
 
 class Poller(PollerBase):

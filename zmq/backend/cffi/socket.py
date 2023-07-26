@@ -299,6 +299,60 @@ class Socket:
                 frame.close()
             return tracker
 
+    def send_multipart(self, msg_parts, flags=0, copy=True, track=False):
+        """Send a sequence of buffers as a multipart message.
+
+        The zmq.SNDMORE flag is added to all msg parts before the last.
+
+        Parameters
+        ----------
+        msg_parts : iterable
+            A sequence of objects to send as a multipart message. Each element
+            can be any sendable object (Frame, bytes, buffer-providers)
+        flags : int, optional
+            Any valid flags for :func:`Socket.send`.
+            SNDMORE is added automatically for frames before the last.
+        copy : bool, optional
+            Should the frame(s) be sent in a copying or non-copying manner.
+            If copy=False, frames smaller than self.copy_threshold bytes
+            will be copied anyway.
+        track : bool, optional
+            Should the frame(s) be tracked for notification that ZMQ has
+            finished with it (ignored if copy=True).
+
+        Returns
+        -------
+        None : if copy or not track
+        MessageTracker : if track and not copy
+            a MessageTracker object, whose `pending` property will
+            be True until the last send is completed.
+        """
+        # typecheck parts before sending:
+        MsgPartTypes = (Frame, bytes, memoryview)
+        for i, msg in enumerate(msg_parts):
+            if isinstance(msg, MsgPartTypes):
+                continue
+            try:
+                memoryview(msg)
+            except Exception:
+                rmsg = repr(msg)
+                if len(rmsg) > 32:
+                    rmsg = rmsg[:32] + '...'
+                raise TypeError(
+                    "Frame %i (%s) does not support the buffer interface."
+                    % (
+                        i,
+                        rmsg,
+                    )
+                )
+
+        send = self.send
+        more_flags = zmq.SNDMORE | flags
+        for msg in msg_parts[:-1]:
+            send(msg, more_flags, copy=copy, track=track)
+        # Send the last part without the extra SNDMORE flag.
+        return send(msg_parts[-1], flags, copy=copy, track=track)
+
     def recv(self, flags=0, copy=True, track=False):
         if copy:
             zmq_msg = ffi.new('zmq_msg_t*')
@@ -322,6 +376,78 @@ class Socket:
         rc = C.zmq_msg_close(zmq_msg)
         _check_rc(rc)
         return _bytes
+
+    def recv_multipart(self, flags=0, copy=True, track=False):
+        """Receive a multipart message as a list of bytes or Frame objects
+
+        Parameters
+        ----------
+        flags : int, optional
+            Any valid flags for :func:`Socket.recv`.
+        copy : bool, optional
+            Should the message frame(s) be received in a copying or non-copying manner?
+            If False a Frame object is returned for each part, if True a copy of
+            the bytes is made for each frame.
+        track : bool, optional
+            Should the message frame(s) be tracked for notification that ZMQ has
+            finished with it? (ignored if copy=True)
+
+        Returns
+        -------
+        msg_parts : list
+            A list of frames in the multipart message; either Frames or bytes,
+            depending on `copy`.
+
+        Raises
+        ------
+        ZMQError
+            for any of the reasons :func:`~Socket.recv` might fail
+        """
+        # have first part already, only loop while more to receive
+        getsockopt = self.getsockopt
+        RCVMORE = zmq.RCVMORE
+        recv = self.recv
+        parts = [recv(flags, copy=copy, track=track)]
+        while getsockopt(RCVMORE):
+            part = recv(flags, copy=copy, track=track)
+            parts.append(part)
+        return parts
+
+    def proxy_to(self, other, max_loops=0):
+        """s.proxy_to(other)
+
+        Receive all available messages from s and send them
+        to "other" in a tight loop, return when no more messages
+        are available to be sent or an error arises. Will not
+        raise zmq.Again when there's no more messages to
+        retrieve, but it might if they cannot be sent.
+
+        Parameters
+        ----------
+        other : socket to relay messages to
+
+        max_loops : maximum amount of messages to relay, defaults
+            to 0 which means infinity.
+
+        Raises
+        ------
+        ZMQError
+            always with the first error, except it will not
+            raise zmq.Again when there's no more messages to
+            retrieve, but it might if they cannot be sent.
+        """
+        flags = zmq.NOBLOCK
+        copy = False
+        while 1:
+            try:
+                msg = self.recv_multipart(flags, copy)
+            except zmq.Again:
+                break
+            self.send_multipart(msg, flags, copy)
+            if max_loops > 0:
+                max_loops -= 1
+                if max_loops <= 0:
+                    break
 
     def monitor(self, addr, events=-1):
         """s.monitor(addr, flags)

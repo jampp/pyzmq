@@ -1,4 +1,14 @@
-from typing import Any, List, Optional, Set, Tuple, TypeVar, Union, overload
+from typing import (
+    Any,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    TypeVar,
+    Union,
+    Sequence,
+    overload
+)
 
 from typing_extensions import Literal
 
@@ -60,6 +70,14 @@ class Socket:
         copy: bool = ...,
         track: bool = ...,
     ) -> Optional["zmq.MessageTracker"]: ...
+    def send_multipart(
+        self,
+        msg_parts: Sequence,
+        flags: int = 0,
+        copy: bool = True,
+        track: bool = False,
+        **kwargs,
+    ) -> Optional["zmq.MessageTracker"]: ...
     @overload
     def recv(
         self,
@@ -89,6 +107,23 @@ class Socket:
         copy: bool = ...,
         track: Optional[bool] = False,
     ) -> Union["zmq.Frame", bytes]: ...
+    @overload
+    def recv_multipart(
+        self, flags: int = ..., *, copy: Literal[True], track: bool = ...
+    ) -> List[bytes]: ...
+    @overload
+    def recv_multipart(
+        self, flags: int = ..., *, copy: Literal[False], track: bool = ...
+    ) -> List["zmq.Frame"]: ...
+    @overload
+    def recv_multipart(
+        self, flags: int = ..., *, track: bool = ...
+    ) -> List[bytes]: ...
+    @overload
+    def recv_multipart(
+        self, flags: int = 0, copy: bool = True, track: bool = False
+    ) -> Union[List[bytes], List["zmq.Frame"]]: ...
+    def proxy_to(self, other: "zmq.Socket", max_loops: int = 0) -> None: ...
     def monitor(self, addr: Optional[str], events: int) -> None: ...
     # draft methods
     def join(self, group: str) -> None: ...

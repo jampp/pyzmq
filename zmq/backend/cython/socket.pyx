@@ -367,6 +367,27 @@ cdef inline object _send_multipart_copy(void *handle, object msg_parts, int flag
     if num_parts == 0:
         raise IndexError("Illegal zero-part message")
 
+    if num_parts > 32:
+        # Type check the whole sequence before sending anything
+        # Smaller sequences get typecheck while preparing part data
+        # which is more efficient
+        for partno in range(num_parts):
+            obj = msg_parts[partno]
+            if not isinstance(obj, (Frame, bytes, memoryview)):
+                try:
+                    memoryview(obj)
+                except Exception:
+                    rmsg = repr(obj)
+                    if len(rmsg) > 32:
+                        rmsg = rmsg[:32] + '...'
+                    raise TypeError(
+                        "Frame %i (%s) does not support the buffer interface."
+                        % (
+                            partno,
+                            rmsg,
+                        )
+                    )
+
     while base_part < num_parts:
         # copy to c array:
         batch_parts = num_parts - base_part
