@@ -11,6 +11,7 @@ public_api = [
     'Socket',
     'Frame',
     'Message',
+    'PollerBase',
     'device',
     'proxy',
     'proxy_steerable',

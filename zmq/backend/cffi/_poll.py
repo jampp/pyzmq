@@ -89,4 +89,12 @@ def zmq_poll(sockets, timeout):
     return result
 
 
-__all__ = ['zmq_poll']
+class PollerBase(object):
+
+    def on_modified(self):
+        pass
+
+    _poll = staticmethod(zmq_poll)
+
+
+__all__ = ['zmq_poll', 'PollerBase']

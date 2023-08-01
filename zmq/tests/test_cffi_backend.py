@@ -3,18 +3,19 @@ from unittest import TestCase
 
 from zmq.tests import SkipTest
 
+from zmq import (  # type: ignore
+    IDENTITY,
+    POLLIN,
+    POLLOUT,
+    PULL,
+    PUSH,
+    REP,
+    REQ,
+)
+
 try:
-    from zmq.backend.cffi import (  # type: ignore
-        IDENTITY,
-        POLLIN,
-        POLLOUT,
-        PULL,
-        PUSH,
-        REP,
-        REQ,
-        zmq_version_info,
-    )
-    from zmq.backend.cffi._cffi import C, ffi
+    from zmq.backend.cffi import zmq_version_info
+    from zmq.backend.cffi import C, ffi
 
     have_ffi_backend = True
 except ImportError:

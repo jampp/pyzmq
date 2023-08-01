@@ -44,5 +44,10 @@ cdef class Socket:
     cdef void _c_close(self)    # underlying close of zmq socket
 
     # cpdef methods for direct-cython access:
-    cpdef object send(self, object data, int flags=*, copy=*, track=*)
-    cpdef object recv(self, int flags=*, copy=*, track=*)
+    cpdef object send(self, object data, int flags=*, copy=*, bint track=*)
+    cpdef object recv(self, int flags=*, copy=*, bint track=*)
+    cpdef object send_multipart(self, object msg_parts, int flags=*, copy=*, bint track=*)
+    cpdef object recv_multipart(self, int flags=*, copy=*, bint track=*)
+    cpdef object proxy_to(self, Socket other, int max_loops=*)
+
+    cdef int _c_getint(self, int option) except? -1
