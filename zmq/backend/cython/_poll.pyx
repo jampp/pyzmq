@@ -28,6 +28,7 @@ from libc.stdlib cimport free, malloc, realloc
 from .libzmq cimport ZMQ_VERSION_MAJOR
 from .libzmq cimport zmq_poll as zmq_poll_c
 from .libzmq cimport zmq_pollitem_t
+from .libzmq cimport zmq_errno
 from .socket cimport Socket
 
 import sys
@@ -39,7 +40,7 @@ except ImportError:
 
 import warnings
 
-from .checkrc cimport _check_rc
+from .checkrc cimport _check_rc, _raise_errno_saved
 
 from zmq.error import InterruptedSystemCall
 
@@ -64,7 +65,7 @@ cdef inline object _zmq_poll(sockets, zmq_pollitem_t *pollitems, int nsockets, l
     timeout : int
         The number of milliseconds to poll for. Negative means no timeout.
     """
-    cdef int rc
+    cdef int rc, errno
     cdef int ms_passed
     cdef double start, current
 
@@ -72,8 +73,11 @@ cdef inline object _zmq_poll(sockets, zmq_pollitem_t *pollitems, int nsockets, l
         start = monotonic()
         with nogil:
             rc = zmq_poll_c(pollitems, nsockets, timeout)
+            if rc == -1:
+                errno = zmq_errno()
         try:
-            _check_rc(rc)
+            if rc == -1:
+                _raise_errno_saved(errno)
         except InterruptedSystemCall:
             if timeout > 0:
                 current = monotonic()
